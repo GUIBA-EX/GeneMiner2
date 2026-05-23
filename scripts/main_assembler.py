@@ -3,6 +3,7 @@ from collections import Counter, deque
 from itertools import chain
 from operator import itemgetter
 import argparse
+import csv
 import gc
 import multiprocessing
 import os
@@ -513,6 +514,24 @@ def Write_Dict(_dict, file_name):
             else:
                 f.writelines([str(key), ",", str(value), ",", '\n'])
 
+def Write_Uce_Summary(rows, file_name):
+    fieldnames = [
+        'locus',
+        'status',
+        'selected_contig_length',
+        'read_supported_span',
+        'read_count',
+        'flank_balance',
+        'candidate_count',
+        'low_quality',
+    ]
+
+    with open(file_name, 'w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({name: row.get(name, '') for name in fieldnames})
+
 def process_key_value(args, key, ref_path, ref_count, iteration, soft_boundary, loop_count, total_count):
     contig_best_path = os.path.join(args.o, "results", key + ".fasta")
     contig_all_path = os.path.join(args.o, "contigs_all", key + ".fasta")
@@ -652,9 +671,19 @@ def process_key_value(args, key, ref_path, ref_count, iteration, soft_boundary, 
             out.write(f'>contig_{len(x[0])}_{x[1]}_{x[2]}_{x[3]}_{x[4]}\n')
             out.write(x[0] + '\n')
 
+    best_contig = contigs_best[0]
     ref_dict, filtered_dict = None, None
     gc.collect()
-    return True, key, {"status": "low quality" if low_qual else "success", "value": contigs_best[0][4]}
+    return True, key, {
+        "status": "low quality" if low_qual else "success",
+        "value": best_contig[4],
+        "selected_contig_length": len(best_contig[0]),
+        "read_supported_span": best_contig[5],
+        "read_count": best_contig[4],
+        "flank_balance": round(best_contig[6], 3),
+        "candidate_count": len(contigs_all),
+        "low_quality": int(low_qual),
+    }
 
 if __name__ == '__main__':
     if sys.platform.startswith('win'):
@@ -702,12 +731,17 @@ if __name__ == '__main__':
                 results.append(process_key_value(args, key, ref_path, ref_count_dict[key], args.iteration, args.soft_boundary, loop_count, len(ref_path_dict)))
 
         result_dict = {}
+        uce_summary_rows = []
         for result in results:
             success, key_update, result_dict_entry = result if type(result) == tuple else result.get()
             if result_dict_entry.get("status") != "skipped":
                 result_dict[key_update] = [result_dict_entry["status"], result_dict_entry["value"]]
+                if args.assembly_mode == 'uce':
+                    uce_summary_rows.append({'locus': key_update, **result_dict_entry})
 
         Write_Dict(result_dict, os.path.join(args.o, "result_dict.txt"))
+        if args.assembly_mode == 'uce':
+            Write_Uce_Summary(uce_summary_rows, os.path.join(args.o, "uce_assembly_summary.csv"))
         t1 = time.time()
         Write_Print(os.path.join(args.o,  "log.txt"), '\nTime cost:', t1 - t0, '\n') # 拼接所用的时间
     except Exception as e:

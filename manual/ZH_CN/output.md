@@ -62,6 +62,10 @@
 
 **aligned**: 多序列比对的结果。
 
+**uce_contigs**：仅在命令行使用`--assembly-mode uce`并执行组装时生成。该文件夹包含按样本合并的`*.contigs.fasta`文件，文件名和序列名采用phyluce兼容格式，可用于后续`phyluce_assembly_match_contigs_to_probes`等流程。`sample_name_map.tsv`记录GeneMiner2样本名与phyluce安全样本名的对应关系。
+
+**uce_assembly_summary.csv**：仅在命令行使用`--assembly-mode uce`并执行组装时生成。该表汇总每个样本和每个locus的组装状态、最佳contig长度、reads支持跨度、reads切片数、侧翼平衡度、候选contig数量和低质量标记。
+
 **summary.csv**: 统计汇总结果，内包含：
 
     Reference Median Length：参考序列的长度中值，用于在[基于参考切齐]步骤对序列进行筛选。
@@ -75,4 +79,3 @@
 
 
  ---
-

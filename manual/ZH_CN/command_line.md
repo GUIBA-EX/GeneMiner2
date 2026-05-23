@@ -68,6 +68,8 @@ cli/geneminer2 -f /home/user/GeneMiner2/DEMO/DEMO3/samples.tsv -r /home/user/Ang
 
 执行这行命令后，GeneMiner2会构建一棵溯祖树，路径为`/home/user/GeneMiner2/DEMO/DEMO3/output/Coalescent.tree`。
 
+如果使用`--assembly-mode uce`且不指定子命令，默认流程会跳过基于参考序列的`trim`步骤，运行`filter refilter assemble combine tree`。这样可以避免刚组装出的UCE侧翼序列在后续参考切齐步骤中被再次裁剪。如需仍然执行参考切齐，可以显式加入`trim`子命令。
+
 命令行参数的说明如下：
 
 - `-f`: 样本列表tsv文件

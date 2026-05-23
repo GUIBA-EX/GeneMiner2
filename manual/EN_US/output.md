@@ -67,6 +67,10 @@
 
 **aligned**: Results of multiple sequence alignment.
 
+**uce_contigs**: Generated only when the command-line workflow runs assembly with `--assembly-mode uce`. This folder contains one phyluce-compatible `*.contigs.fasta` file per sample for downstream tools such as `phyluce_assembly_match_contigs_to_probes`. `sample_name_map.tsv` records the mapping between GeneMiner2 sample names and phyluce-safe sample names.
+
+**uce_assembly_summary.csv**: Generated only when the command-line workflow runs assembly with `--assembly-mode uce`. This table summarizes assembly status, selected contig length, read-supported span, read slice count, flank balance, candidate contig count, and low-quality flags for each sample and locus.
+
 ####  :
 
 **PPD>result>supercontig>s8 _rm_paralogs> Final_kept_genes**: This is the final result file of [Paralogous Detection (PPD)], for specific meanings of other files see [PPD GitHub](https://github.com/Bean061/putative_paralog#part2-trims-alignment-and-detectes-the-putative-paralogs).

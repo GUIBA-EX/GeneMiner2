@@ -367,6 +367,109 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
                 print(f'An error occurred while processing {name}: {e}')
                 continue
 
+def make_phyluce_sample_name(sample):
+    name = ''.join(c if ord(c) < 128 and (c.isalnum() or c == '_') else '_' for c in sample).strip('_')
+
+    if not name:
+        name = 'sample'
+
+    if not name[0].isalpha():
+        name = 'sample_' + name
+
+    return name
+
+def get_contig_read_count(header):
+    parts = header.split('_')
+
+    if parts and parts[-1].isdigit():
+        return parts[-1]
+
+    return '0'
+
+def write_uce_contigs_for_phyluce(args, samples):
+    out_loc = args.o.strip()
+    uce_dir = os.path.join(out_loc, 'uce_contigs')
+
+    if os.path.isdir(uce_dir):
+        shutil.rmtree(uce_dir, ignore_errors=True)
+
+    os.makedirs(uce_dir, exist_ok=True)
+
+    name_map_path = os.path.join(uce_dir, 'sample_name_map.tsv')
+
+    with open(name_map_path, 'w', newline='') as map_file:
+        writer = csv.writer(map_file, delimiter='\t')
+        writer.writerow(['geneminer_sample', 'phyluce_sample', 'contigs_file', 'contig_count'])
+        used_names = set()
+
+        for sample in samples.keys():
+            phyluce_sample = make_phyluce_sample_name(sample)
+
+            if phyluce_sample in used_names:
+                suffix = 2
+                base_name = phyluce_sample
+
+                while f'{base_name}_{suffix}' in used_names:
+                    suffix += 1
+
+                phyluce_sample = f'{base_name}_{suffix}'
+
+            used_names.add(phyluce_sample)
+            results_dir = os.path.join(out_loc, sample, 'results')
+            out_path = os.path.join(uce_dir, phyluce_sample + '.contigs.fasta')
+            contig_count = 0
+
+            with open(out_path, 'w') as out:
+                if os.path.isdir(results_dir):
+                    for entry in sorted(os.scandir(results_dir), key=lambda e: e.name):
+                        if not entry.is_file() or not entry.name.endswith(('.fa', '.fas', '.fasta')):
+                            continue
+
+                        locus = os.path.splitext(entry.name)[0]
+
+                        with open(entry.path) as f:
+                            for header, seq in SimpleFastaParser(f):
+                                contig_count += 1
+                                read_count = get_contig_read_count(header)
+                                out.write(f'>NODE_{contig_count}_length_{len(seq)}_cov_{read_count}.0_{locus}\n')
+                                out.write(seq + '\n')
+
+            writer.writerow([sample, phyluce_sample, out_path, contig_count])
+
+def write_uce_assembly_summary(args, samples):
+    out_loc = args.o.strip()
+    out_path = os.path.join(out_loc, 'uce_assembly_summary.csv')
+    fieldnames = [
+        'sample',
+        'locus',
+        'status',
+        'selected_contig_length',
+        'read_supported_span',
+        'read_count',
+        'flank_balance',
+        'candidate_count',
+        'low_quality',
+    ]
+
+    with open(out_path, 'w', newline='') as out:
+        writer = csv.DictWriter(out, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for sample in samples.keys():
+            summary_path = os.path.join(out_loc, sample, 'uce_assembly_summary.csv')
+
+            if not os.path.isfile(summary_path):
+                continue
+
+            with open(summary_path, newline='') as f:
+                for row in csv.DictReader(f):
+                    row['sample'] = sample
+                    writer.writerow({name: row.get(name, '') for name in fieldnames})
+
+def write_uce_outputs(args, samples):
+    write_uce_contigs_for_phyluce(args, samples)
+    write_uce_assembly_summary(args, samples)
+
 def generate_consensus(args, samples):
     out_loc = args.o.strip()
 
@@ -864,6 +967,9 @@ def execute_tasks(args, samples):
         if do_filter or do_refilter or do_assemble:
             do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble)
 
+            if do_assemble and args.assembly_mode == 'uce':
+                write_uce_outputs(args, samples)
+
         if do_consensus:
             generate_consensus(args, samples)
 
@@ -957,7 +1063,12 @@ if __name__ == '__main__':
     parser.add_argument('--max-depth', help=argparse.SUPPRESS)
 
     args = parser.parse_args()
-    args.command = args.command or ('filter', 'refilter', 'assemble', 'trim', 'combine', 'tree')
+
+    if not args.command:
+        if args.assembly_mode == 'uce':
+            args.command = ('filter', 'refilter', 'assemble', 'combine', 'tree')
+        else:
+            args.command = ('filter', 'refilter', 'assemble', 'trim', 'combine', 'tree')
 
     if args.min_depth is not None:
         print('  Option --min-depth has been removed. Please use --depth-low-water-mark, --error-threshold or --min-coverage instead.')
