@@ -98,6 +98,7 @@ cli/geneminer2 -f /home/user/GeneMiner2/DEMO/DEMO3/samples.tsv -r /home/user/Ang
 - `--alignment-filter`: 建树前的比对列过滤程序，支持`trimal`、`alifilter`和`none`，默认为`trimal`
 - `--filter-processes`: 同时运行的trimAl或AliFilter过滤任务数上限，默认等于`-p`
 - `--alifilter-model`: 使用`--alignment-filter alifilter`时指定AliFilter模型名称或`model.json`路径
+- `--strict-combine-errors`: 如果任一locus在多序列比对、alignment清理或比对列过滤阶段失败，则立即停止`combine`。默认行为是输出警告并跳过失败的locus
 - `--no-trimal`: 已弃用，等同于`--alignment-filter none`
 - `-cd`: 清理序列的最大差异
 - `-cn`: 清理序列的最小序列数量

@@ -708,6 +708,21 @@ def combine_genes(args, samples):
         if not written:
             os.remove(out_path)
 
+    def handle_locus_failure(gene, stage, exc=None, output_path=None):
+        if output_path and os.path.isfile(output_path):
+            os.remove(output_path)
+
+        message = f"{stage} failed on {gene}"
+
+        if args.strict_combine_errors:
+            raise RuntimeError(message) from exc
+
+        if exc:
+            message = f"{message}: {exc}"
+
+        print(f"Warning: {message}", file=sys.stderr)
+        return False
+
     def align_gene(gene):
         in_path = os.path.join(combine_dir, gene + '.fasta')
         out_path = os.path.join(alignment_dir, gene + '.fasta')
@@ -730,8 +745,8 @@ def combine_genes(args, samples):
                     subprocess.run([msa_bin, '--auto', '--quiet', '--nuc',
                                     '--thread', str(msa_threads), in_path],
                                    stdout=out, stderr=subprocess.DEVNULL, check=True)
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"{args.msa_program} failed on {gene}") from e
+        except (OSError, subprocess.CalledProcessError, RuntimeError, ValueError) as e:
+            return handle_locus_failure(gene, args.msa_program, e, out_path)
 
         return os.path.isfile(out_path)
 
@@ -739,14 +754,19 @@ def combine_genes(args, samples):
         gene_path = os.path.join(alignment_dir, gene + '.fasta')
 
         if os.path.isfile(gene_path):
-            fix_alignment.clean_file(gene_path, args.clean_sequences, args.clean_difference)
+            try:
+                fix_alignment.clean_file(gene_path, args.clean_sequences, args.clean_difference)
+            except (OSError, RuntimeError, ValueError) as e:
+                return handle_locus_failure(gene, 'alignment cleanup', e, gene_path)
+
+        return os.path.isfile(gene_path)
 
     def filter_gene(gene):
         in_path = os.path.join(alignment_dir, gene + '.fasta')
         out_path = os.path.join(trim_dir, gene + '.fasta')
 
         if not os.path.isfile(in_path):
-            return
+            return False
 
         if alignment_filter == 'trimal':
             cmd = [trimal_bin, '-in', in_path, '-out', out_path, '-automated1']
@@ -756,12 +776,14 @@ def combine_genes(args, samples):
             if args.alifilter_model:
                 cmd.extend(['-m', args.alifilter_model])
         else:
-            return
+            return False
 
         try:
             subprocess.run(cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            raise RuntimeError(f"{alignment_filter} failed on {gene}") from e
+        except (OSError, subprocess.CalledProcessError) as e:
+            return handle_locus_failure(gene, alignment_filter, e, out_path)
+
+        return os.path.isfile(out_path)
 
     alignment_count = 0
     gene_count = len(genes)
@@ -782,11 +804,17 @@ def combine_genes(args, samples):
             if not aligned:
                 return False
 
-            clean_gene(gene)
+            cleaned = clean_gene(gene)
+
+            if not cleaned:
+                return False
 
             if alignment_filter != 'none':
                 with filter_semaphore:
-                    filter_gene(gene)
+                    filtered = filter_gene(gene)
+
+                if not filtered:
+                    return False
 
             return True
 
@@ -1131,6 +1159,7 @@ if __name__ == '__main__':
     group_combine.add_argument('--alignment-filter', choices=('trimal', 'alifilter', 'none'), default=None, help='Program for filtering aligned loci before tree reconstruction (default = trimal)', type=str)
     group_combine.add_argument('--filter-processes', default=None, help='Maximum number of concurrent alignment filtering jobs (default = -p)', metavar='INT', type=int)
     group_combine.add_argument('--alifilter-model', default=None, help='AliFilter model specification or model.json path when --alignment-filter alifilter is used', metavar='MODEL', type=str)
+    group_combine.add_argument('--strict-combine-errors', action='store_true', default=False, help='Stop combine if any locus fails during alignment, cleanup, or alignment filtering')
     group_combine.add_argument('--no-alignment', action='store_true', default=False, help='Do not perform multiple sequence alignment')
     group_combine.add_argument('--no-trimal', action='store_true', default=False, help='Do not run alignment filtering (deprecated; use --alignment-filter none)')
 
