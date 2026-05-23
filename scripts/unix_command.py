@@ -4,11 +4,11 @@ import argparse
 import csv
 import math
 import os
-import shlex
 import shutil
 import statistics
 import subprocess
 import sys
+import threading
 
 import build_trimed
 import fix_alignment
@@ -622,8 +622,15 @@ def blast_trim(args, samples):
 
 def combine_genes(args, samples):
     out_loc = args.o.strip()
+    alignment_filter = get_alignment_filter(args)
 
     if not args.no_alignment:
+        msa_threads = get_msa_threads(args)
+        filter_processes = get_filter_processes(args)
+
+        if args.alifilter_model and alignment_filter != 'alifilter':
+            raise RuntimeError("--alifilter-model requires --alignment-filter alifilter")
+
         if args.msa_program == 'clustalo':
             msa_bin = find_executable('clustalo')
         elif args.msa_program == 'muscle':
@@ -631,8 +638,15 @@ def combine_genes(args, samples):
         else:
             msa_bin = find_executable('mafft')
 
-        if not args.no_trimal:
+        if alignment_filter == 'trimal':
             trimal_bin = find_executable('trimal')
+            alifilter_bin = None
+        elif alignment_filter == 'alifilter':
+            trimal_bin = None
+            alifilter_bin = find_executable('AliFilter')
+        else:
+            trimal_bin = None
+            alifilter_bin = None
 
         merge_seq_bin = find_executable('merge_seq', internal=True)
 
@@ -652,12 +666,18 @@ def combine_genes(args, samples):
     if not args.no_alignment:
         alignment_dir = os.path.join(out_loc, 'combined_results', 'aligned')
         trim_dir = os.path.join(out_loc, 'combined_trimed')
+        trim_fasta = os.path.join(out_loc, 'combined_trimed.fasta')
 
         if os.path.isdir(trim_dir):
             shutil.rmtree(trim_dir, ignore_errors=True)
 
+        if os.path.isfile(trim_fasta):
+            os.remove(trim_fasta)
+
         os.makedirs(alignment_dir, exist_ok=True)
-        os.makedirs(trim_dir, exist_ok=True)
+
+        if alignment_filter != 'none':
+            os.makedirs(trim_dir, exist_ok=True)
 
     if args.combine_source == 'trimmed':
         in_name = 'blast'
@@ -693,19 +713,27 @@ def combine_genes(args, samples):
         out_path = os.path.join(alignment_dir, gene + '.fasta')
 
         if not os.path.isfile(in_path):
-            return
+            return False
 
-        if args.msa_program == 'clustalo':
-            subprocess.run([msa_bin, '-i', in_path, '-o', out_path, '--auto', '--force',
-                            '--seqtype=DNA', '--threads=1'], stderr=subprocess.DEVNULL)
-        elif args.msa_program == 'muscle':
-            subprocess.run([msa_bin, '-align', in_path, '-output', out_path, '-quiet',
-                            '-nt', '-threads', '1'], stderr=subprocess.DEVNULL)
-            muscle_wrapper.reorder_sequences(in_path, out_path)
-        else:
-            subprocess.run(f'{shlex.quote(msa_bin)} --auto --quiet --nuc --thread 0 '
-                           f'{shlex.quote(in_path)} > {shlex.quote(out_path)}',
-                           shell=True, stderr=subprocess.DEVNULL)
+        try:
+            if args.msa_program == 'clustalo':
+                subprocess.run([msa_bin, '-i', in_path, '-o', out_path, '--auto', '--force',
+                                '--seqtype=DNA', f'--threads={msa_threads}'],
+                               stderr=subprocess.DEVNULL, check=True)
+            elif args.msa_program == 'muscle':
+                subprocess.run([msa_bin, '-align', in_path, '-output', out_path, '-quiet',
+                                '-nt', '-threads', str(msa_threads)],
+                               stderr=subprocess.DEVNULL, check=True)
+                muscle_wrapper.reorder_sequences(in_path, out_path)
+            else:
+                with open(out_path, 'w') as out:
+                    subprocess.run([msa_bin, '--auto', '--quiet', '--nuc',
+                                    '--thread', str(msa_threads), in_path],
+                                   stdout=out, stderr=subprocess.DEVNULL, check=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"{args.msa_program} failed on {gene}") from e
+
+        return os.path.isfile(out_path)
 
     def clean_gene(gene):
         gene_path = os.path.join(alignment_dir, gene + '.fasta')
@@ -713,51 +741,72 @@ def combine_genes(args, samples):
         if os.path.isfile(gene_path):
             fix_alignment.clean_file(gene_path, args.clean_sequences, args.clean_difference)
 
-    def trim_gene(gene):
+    def filter_gene(gene):
         in_path = os.path.join(alignment_dir, gene + '.fasta')
         out_path = os.path.join(trim_dir, gene + '.fasta')
 
-        if os.path.isfile(in_path):
-            subprocess.run([trimal_bin, '-in', in_path, '-out', out_path, '-automated1'])
+        if not os.path.isfile(in_path):
+            return
+
+        if alignment_filter == 'trimal':
+            cmd = [trimal_bin, '-in', in_path, '-out', out_path, '-automated1']
+        elif alignment_filter == 'alifilter':
+            cmd = [alifilter_bin, '-i', in_path, '-o', out_path]
+
+            if args.alifilter_model:
+                cmd.extend(['-m', args.alifilter_model])
+        else:
+            return
+
+        try:
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            raise RuntimeError(f"{alignment_filter} failed on {gene}") from e
 
     alignment_count = 0
     gene_count = len(genes)
 
+    if args.no_alignment:
+        process_gene = merge_gene
+    else:
+        msa_slots = max(1, args.p // msa_threads)
+        msa_semaphore = threading.Semaphore(msa_slots)
+        filter_semaphore = threading.Semaphore(filter_processes)
+
+        def process_gene(gene):
+            merge_gene(gene)
+
+            with msa_semaphore:
+                aligned = align_gene(gene)
+
+            if not aligned:
+                return False
+
+            clean_gene(gene)
+
+            if alignment_filter != 'none':
+                with filter_semaphore:
+                    filter_gene(gene)
+
+            return True
+
     if args.p > 1:
         with ThreadPoolExecutor(max_workers=args.p) as executor:
-            for _ in executor.map(merge_gene, genes):
-                pass
-
-            if not args.no_alignment:
-                for _ in executor.map(align_gene, genes):
+            for aligned in executor.map(process_gene, genes):
+                if aligned:
                     alignment_count += 1
 
                     if alignment_count >= 2:
                         print(f'{alignment_count}/{gene_count} genes aligned\r', end='')
 
-                for _ in executor.map(clean_gene, genes):
-                    pass
-
-                if not args.no_trimal:
-                    for _ in executor.map(trim_gene, genes):
-                        pass
-
     else:
         for gene in genes:
-            merge_gene(gene)
-
-            if not args.no_alignment:
-                align_gene(gene)
-
+            aligned = process_gene(gene)
+            if aligned:
                 alignment_count += 1
 
                 if alignment_count >= 2:
                     print(f'{alignment_count}/{gene_count} genes aligned\r', end='')
-
-                clean_gene(gene)
-
-                if not args.no_trimal:
-                    trim_gene(gene)
 
     print('\n')
 
@@ -765,9 +814,42 @@ def combine_genes(args, samples):
         subprocess.run([merge_seq_bin, '-input', alignment_dir, '-exts', '.fasta', '-missing', '-',
                         '-output', os.path.join(out_loc, 'combined_results.fasta')])
 
-        if not args.no_trimal:
+        if alignment_filter != 'none':
             subprocess.run([merge_seq_bin, '-input', trim_dir, '-exts', '.fasta', '-missing', '-',
                             '-output', os.path.join(out_loc, 'combined_trimed.fasta')])
+
+def get_alignment_filter(args):
+    if getattr(args, 'no_trimal', False):
+        return 'none'
+
+    return getattr(args, 'alignment_filter', None) or 'trimal'
+
+def get_msa_threads(args):
+    return max(1, getattr(args, 'msa_threads', 1))
+
+def get_filter_processes(args):
+    filter_processes = getattr(args, 'filter_processes', None)
+
+    if filter_processes is None:
+        return max(1, args.p)
+
+    return max(1, filter_processes)
+
+def get_locus_alignment_dir(args):
+    out_loc = args.o.strip()
+
+    if get_alignment_filter(args) == 'none':
+        return os.path.join(out_loc, 'combined_results', 'aligned')
+
+    return os.path.join(out_loc, 'combined_trimed')
+
+def get_concatenated_alignment_path(args):
+    out_loc = args.o.strip()
+
+    if get_alignment_filter(args) == 'none':
+        return os.path.join(out_loc, 'combined_results.fasta')
+
+    return os.path.join(out_loc, 'combined_trimed.fasta')
 
 def build_single_tree(prog_name, prog_bin, in_path, bootstrap=0, quiet=False, threads=1):
     if prog_name == 'raxmlng':
@@ -864,10 +946,7 @@ def build_coalescent_tree(args):
         except OSError:
             return set()
 
-    if args.no_trimal:
-        alignment_dir = os.path.join(out_loc, 'combined_results', 'aligned')
-    else:
-        alignment_dir = os.path.join(out_loc, 'combined_trimed')
+    alignment_dir = get_locus_alignment_dir(args)
 
     genes = {t[0] for t in get_ref_genes(args.r)} & find_genes(alignment_dir)
     gene_count = len(genes)
@@ -932,10 +1011,7 @@ def build_concatenation_tree(args):
     else:
         phylo_bin = find_executable('FastTree')
 
-    if args.no_trimal:
-        in_path = os.path.join(out_loc, 'combined_results.fasta')
-    else:
-        in_path = os.path.join(out_loc, 'combined_trimed.fasta')
+    in_path = get_concatenated_alignment_path(args)
 
     if not os.path.isfile(in_path):
         raise RuntimeError(f"Unable to find the concatenated alignment at '{in_path}'")
@@ -1051,8 +1127,12 @@ if __name__ == '__main__':
     group_combine.add_argument('-cd', '--clean-difference', default=1, help='Maximum acceptable pairwise difference in an alignment (default = 1.0)', metavar='FLOAT', type=float)
     group_combine.add_argument('-cn', '--clean-sequences', default=0, help='Number of sequences required in an alignment (default = 0)', metavar='INT', type=int)
     group_combine.add_argument('--msa-program', choices=('clustalo', 'mafft', 'muscle'), default='mafft', help='Program for multiple sequence alignment', type=str)
+    group_combine.add_argument('--msa-threads', default=1, help='Threads used by each multiple-sequence-alignment job (default = 1)', metavar='INT', type=int)
+    group_combine.add_argument('--alignment-filter', choices=('trimal', 'alifilter', 'none'), default=None, help='Program for filtering aligned loci before tree reconstruction (default = trimal)', type=str)
+    group_combine.add_argument('--filter-processes', default=None, help='Maximum number of concurrent alignment filtering jobs (default = -p)', metavar='INT', type=int)
+    group_combine.add_argument('--alifilter-model', default=None, help='AliFilter model specification or model.json path when --alignment-filter alifilter is used', metavar='MODEL', type=str)
     group_combine.add_argument('--no-alignment', action='store_true', default=False, help='Do not perform multiple sequence alignment')
-    group_combine.add_argument('--no-trimal', action='store_true', default=False, help='Do not run trimAl on alignments')
+    group_combine.add_argument('--no-trimal', action='store_true', default=False, help='Do not run alignment filtering (deprecated; use --alignment-filter none)')
 
     group_tree = parser.add_argument_group('argument for tree inference')
     group_tree.add_argument('-m', '--tree-method', choices=('coalescent', 'concatenation'), default='coalescent', help='Multi-gene tree reconstruction method (default = coalescent)')
@@ -1063,6 +1143,24 @@ if __name__ == '__main__':
     parser.add_argument('--max-depth', help=argparse.SUPPRESS)
 
     args = parser.parse_args()
+
+    if args.no_trimal and args.alignment_filter not in (None, 'none'):
+        parser.error('--no-trimal cannot be combined with --alignment-filter trimal or --alignment-filter alifilter')
+
+    if args.alifilter_model and get_alignment_filter(args) != 'alifilter':
+        parser.error('--alifilter-model requires --alignment-filter alifilter')
+
+    if args.p < 1:
+        parser.error('-p must be at least 1')
+
+    if args.msa_threads < 1:
+        parser.error('--msa-threads must be at least 1')
+
+    if args.msa_threads > args.p:
+        parser.error('--msa-threads cannot be greater than -p')
+
+    if args.filter_processes is not None and args.filter_processes < 1:
+        parser.error('--filter-processes must be at least 1')
 
     if not args.command:
         if args.assembly_mode == 'uce':

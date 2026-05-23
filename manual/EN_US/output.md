@@ -59,11 +59,11 @@
 
 **combined_results**: Stores the combined result files.
 
-**combined_trimmed**: Stores the result files after merging and trimming.
+**combined_trimed**: Stores per-locus alignments after alignment filtering. By default these files are produced by trimAl; if `--alignment-filter alifilter` is used, they are produced by AliFilter. This folder is not generated when `--alignment-filter none` or `--no-trimal` is used.
 
 **combined_results.fasta**: Concatenated result file.
 
-**combined_trimmed.fasta**: Trimmed concatenated result file.
+**combined_trimed.fasta**: Concatenated alignment after alignment filtering. By default this file is produced from trimAl-filtered loci; if `--alignment-filter alifilter` is used, it is produced from AliFilter-filtered loci.
 
 **aligned**: Results of multiple sequence alignment.
 

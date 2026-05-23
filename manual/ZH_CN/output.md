@@ -54,11 +54,11 @@
 
 **combined_results**：储存合并后的结果文件。
 
-**combined_trimed**：储存合并并切齐后的结果文件。
+**combined_trimed**：储存按locus过滤后的多序列比对结果。默认由trimAl生成；如果使用`--alignment-filter alifilter`，则由AliFilter生成。使用`--alignment-filter none`或`--no-trimal`时不会生成该文件夹。
 
 **combined_results.fasta**: 串联结果文件。
 
-**combined_trimed.fasta**： 修剪后的串联结果文件。
+**combined_trimed.fasta**： 经过比对列过滤后的串联结果文件。默认由trimAl过滤结果合并生成；如果使用`--alignment-filter alifilter`，则由AliFilter过滤结果合并生成。
 
 **aligned**: 多序列比对的结果。
 

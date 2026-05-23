@@ -43,9 +43,11 @@ The binaries are placed under the `cli` directory. Run `cli/geneminer2 -h` to vi
 conda install -c bioconda aster blast clustalo fasttree iqtree mafft magicblast minimap2 muscle raxml-ng trimal veryfasttree
 ```
 
+AliFilter can be used as an optional alignment filtering program. It is not installed by the command above; download the AliFilter executable separately and make sure `AliFilter` is available in `PATH` before using `--alignment-filter alifilter`.
+
 ## Usage
 
-To run an analysis, GeneMiner2 requires a a tab-delimited sample list and reference sequences in FASTA format. The sample list has the format `<Species Name><Tab><Read File 1>` (single read) or `<Species Name><Tab><Read File 1><Tab><Read File 2>` (paired-end reads), each line denoting a sample.
+To run an analysis, GeneMiner2 requires a tab-delimited sample list and reference sequences in FASTA format. The sample list has the format `<Species Name><Tab><Read File 1>` (single read) or `<Species Name><Tab><Read File 1><Tab><Read File 2>` (paired-end reads), each line denoting a sample.
 
 Assuming the repository is cloned to `/home/user/GeneMiner2`, the sample list for [DEMO 3](../../DEMO/DEMO3/DEMO3.md) looks as follows:
 
@@ -58,7 +60,7 @@ Bupleurum_wenchuanense	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_wen
 Bupleurum_yunnanense	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_yunnanense_1.fq.gz	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_yunnanense_2.fq.gz
 ```
 
-The reference sequences has to be under a separate directory. For each gene, place all of its reference sequences in `<Gene Name>.fasta`. For example, to extract matK and psbA genes, create `matK.fasta` and `psbA.fasta` under an empty directory, and write reference sequences into the respective file.
+The reference sequences have to be under a separate directory. For each gene, place all of its reference sequences in `<Gene Name>.fasta`. For example, to extract matK and psbA genes, create `matK.fasta` and `psbA.fasta` under an empty directory, and write reference sequences into the respective file.
 
 Next, assuming the sample list is saved to `/home/user/GeneMiner2/DEMO/DEMO3/samples.tsv`, Angiosperms353 genes saved under `/home/user/Angiosperms353`, and the desired output location `/home/user/GeneMiner2/DEMO/DEMO3/output`, run GeneMiner2 with default settings:
 
@@ -92,10 +94,15 @@ Command line parameters:
 - `-tr`: Retention length threshold (as a decimal, between 0.0 and 1.0)
 - `-cs`: Source of combine results (`assembly`, `consensus` or `trimmed`)
 - `--msa-program`: `mafft`, `muscle` or `clustalo`
+- `--msa-threads`: Threads used by each multiple-sequence-alignment job (default = 1). GeneMiner2 limits concurrent alignment jobs so the total requested alignment threads do not exceed `-p`.
+- `--alignment-filter`: Alignment column filtering program before tree reconstruction (`trimal`, `alifilter` or `none`; default = `trimal`)
+- `--filter-processes`: Maximum number of concurrent trimAl or AliFilter jobs (default = `-p`)
+- `--alifilter-model`: AliFilter model specification or `model.json` path when `--alignment-filter alifilter` is used
+- `--no-trimal`: Deprecated alias for `--alignment-filter none`
 - `-cd`: Maximum difference after clean-up
 - `-cn`: Minimum number of sequences after clean-up
 - `-m`: `coalescent` or `concatenation`
-- `-b`: Number of ootstrap replicates
+- `-b`: Number of bootstrap replicates
 - `--phylo-program`: `fasttree`, `veryfasttree`, `iqtree` or `raxmlng`
 
 For example, after running the command above, you can ask GeneMiner2 to build a concatenation tree based on previous results using `tree` subcommand and `-m concatenation` argument:

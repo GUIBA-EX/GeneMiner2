@@ -43,6 +43,8 @@ make
 conda install -c bioconda aster blast clustalo fasttree iqtree mafft magicblast minimap2 muscle raxml-ng trimal veryfasttree
 ```
 
+AliFilter可以作为可选的多序列比对过滤程序使用。上面的conda命令不会安装AliFilter；如需使用`--alignment-filter alifilter`，请单独下载AliFilter可执行文件，并确保命令行中可以直接调用`AliFilter`。
+
 ## 用法
 
 GeneMiner2需要tsv格式的样本列表和FASTA格式的参考序列。样本列表的具体格式是`<物种名><Tab><数据文件1>`（单端）或者`<物种名><Tab><数据文件1><Tab><数据文件2>`（双端），每一行代表一个样本。其中的数据文件建议采用绝对路径。
@@ -58,7 +60,7 @@ Bupleurum_wenchuanense	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_wen
 Bupleurum_yunnanense	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_yunnanense_1.fq.gz	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_yunnanense_2.fq.gz
 ```
 
-参考序列需要放在一个独立的文件夹下，每个基因可以有一条或多条参考序列。对于每个基因，将对应的所有参考序列存在`<基因名>.fasta`下。假设需要提取matK和psbA两个基因，则需要在一个空白文件夹下创建`matK.fasta`和`psaA.fasta`两个文件，分别保存对应的参考序列。
+参考序列需要放在一个独立的文件夹下，每个基因可以有一条或多条参考序列。对于每个基因，将对应的所有参考序列存在`<基因名>.fasta`下。假设需要提取matK和psbA两个基因，则需要在一个空白文件夹下创建`matK.fasta`和`psbA.fasta`两个文件，分别保存对应的参考序列。
 
 假设样本列表保存在`/home/user/GeneMiner2/DEMO/DEMO3/samples.tsv`，被子植物353参考基因保存在`/home/user/Angiosperms353`，期望的输出文件夹为`/home/user/GeneMiner2/DEMO/DEMO3/output`，用默认设置运行GeneMiner2的命令如下：
 
@@ -92,6 +94,11 @@ cli/geneminer2 -f /home/user/GeneMiner2/DEMO/DEMO3/samples.tsv -r /home/user/Ang
 - `-tr`: 基于参考切齐的保留长度阈值（介于0-1的小数形式）
 - `-cs`: 合并结果的来源序列，可以是`assembly`、`consensus`或`trimmed`
 - `--msa-program`: 多序列比对的软件，支持`mafft`、`muscle`和`clustalo`
+- `--msa-threads`: 每个多序列比对任务使用的线程数，默认为1。GeneMiner2会限制同时运行的比对任务数量，使比对阶段请求的总线程数不超过`-p`
+- `--alignment-filter`: 建树前的比对列过滤程序，支持`trimal`、`alifilter`和`none`，默认为`trimal`
+- `--filter-processes`: 同时运行的trimAl或AliFilter过滤任务数上限，默认等于`-p`
+- `--alifilter-model`: 使用`--alignment-filter alifilter`时指定AliFilter模型名称或`model.json`路径
+- `--no-trimal`: 已弃用，等同于`--alignment-filter none`
 - `-cd`: 清理序列的最大差异
 - `-cn`: 清理序列的最小序列数量
 - `-m`: 建树的方法，支持`coalescent`和`concatenation`
