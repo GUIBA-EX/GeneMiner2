@@ -174,6 +174,9 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
             if os.path.isfile(read_count_path):
                 os.remove(read_count_path)
 
+            if os.path.isdir(out_dir):
+                shutil.rmtree(out_dir, ignore_errors=True)
+
             params = [filter_bin, '-r', args.r, '-q1', q1, '-q2', q2, '-o', os.path.join(out_loc, name),
                       '-kf', str(args.kf), '-s', str(args.step_size), '-gr', '-subdir', 'filtered_pe',
                       '-m', '5', '-lb', '-lkd', kmer_dict_path]
@@ -181,7 +184,7 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
             if args.max_reads > 0:
                 params.extend(['-m_reads', str(args.max_reads)])
 
-            subprocess.run(params)
+            subprocess.run(params, check=True)
 
             if not os.path.isfile(read_count_path):
                 raise RuntimeError('Filter failed')
@@ -189,6 +192,9 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
             if not do_refilter and os.path.isdir(out_dir):
                 merge_dir = os.path.join(out_loc, name, 'filtered')
                 sample_ext = get_sample_ext(q1)
+
+                if os.path.isdir(merge_dir):
+                    shutil.rmtree(merge_dir, ignore_errors=True)
 
                 os.makedirs(merge_dir, exist_ok=True)
 
@@ -233,12 +239,18 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
             if not os.path.isdir(in_dir):
                 raise RuntimeError('No successful filter run, cannot re-filter')
 
+            if os.path.isdir(out_dir):
+                shutil.rmtree(out_dir, ignore_errors=True)
+
             params = [refilter_bin, '-r', args.r, '-qd', in_dir, '-o', out_dir, '-kf', str(args.kf),
                       '-p', str(thr), '--log-file', os.path.join(out_loc, name, 'log.txt'),
                       '--min-depth', str(args.depth_low_water_mark), '--max-depth', str(args.depth_limit),
                       '--max-size', str(args.file_size_limit), '--use-gm2-format']
 
-            subprocess.run(params)
+            if args.assembly_mode == 'uce':
+                params.append('--keep-linked-mates')
+
+            subprocess.run(params, check=True)
 
             if do_filter and os.path.isdir(in_dir) and os.path.isdir(out_dir):
                 shutil.rmtree(in_dir, ignore_errors=True)
@@ -260,13 +272,21 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
             if os.path.isdir(out_dir):
                 shutil.rmtree(out_dir, ignore_errors=True)
 
+            if os.path.isfile(result_path):
+                os.remove(result_path)
+
+            uce_summary_path = os.path.join(out_loc, name, 'uce_assembly_summary.csv')
+
+            if os.path.isfile(uce_summary_path):
+                os.remove(uce_summary_path)
+
             params = [assembler_bin, '-r', args.r, '-o', os.path.join(out_loc, name), '-ka', str(args.ka),
                       '-k_min', str(args.min_ka), '-k_max', str(args.max_ka), '-limit_count', str(args.error_threshold),
                       '-iteration', str(args.search_depth), '-sb', soft_boundary, '-cov_min', str(args.min_coverage),
                       '-p', str(thr), '--assembly-mode', args.assembly_mode,
                       '--uce-side-candidates', str(args.uce_side_candidates)]
 
-            subprocess.run(params)
+            subprocess.run(params, check=True)
 
             if not os.path.isfile(result_path):
                 raise RuntimeError('Assembly failed')
@@ -512,11 +532,13 @@ def generate_consensus(args, samples):
         gene, asm_path, read_path, sam_path = task
 
         subprocess.run([minimap2_bin, '-ax', 'sr', '-t', '1', '--sam-hit-only',
-                        '-o', sam_path, asm_path, read_path])
+                        '-o', sam_path, asm_path, read_path],
+                       check=True)
 
         if os.path.isfile(sam_path):
             subprocess.run([consensus_bin, '-i', sam_path, '-c', str(args.consensus_threshold),
-                            '-o', os.path.dirname(sam_path), '-s', '0'])
+                            '-o', os.path.dirname(sam_path), '-s', '0'],
+                           check=True)
 
             os.remove(sam_path)
 
@@ -560,9 +582,9 @@ def blast_trim(args, samples):
 
     def build_blast_db(name_tup):
         name, ext = name_tup
-        subprocess.run([makeblastdb_bin, "-in", f'"{os.path.realpath(os.path.join(args.r, name + ext))}"',
+        subprocess.run([makeblastdb_bin, "-in", os.path.realpath(os.path.join(args.r, name + ext)),
                         "-dbtype", "nucl", "-out", name],
-                       cwd=os.path.join(out_loc, 'blast_db'))
+                       cwd=os.path.join(out_loc, 'blast_db'), check=True)
 
     def iterate_gene(sample):
         if args.trim_source == 'consensus':
@@ -670,6 +692,7 @@ def combine_genes(args, samples):
     if not args.no_alignment:
         alignment_dir = os.path.join(out_loc, 'combined_results', 'aligned')
         trim_dir = os.path.join(out_loc, 'combined_trimed')
+        combined_fasta = os.path.join(out_loc, 'combined_results.fasta')
         trim_fasta = os.path.join(out_loc, 'combined_trimed.fasta')
 
         if os.path.isdir(trim_dir):
@@ -677,6 +700,9 @@ def combine_genes(args, samples):
 
         if os.path.isfile(trim_fasta):
             os.remove(trim_fasta)
+
+        if os.path.isfile(combined_fasta):
+            os.remove(combined_fasta)
 
         os.makedirs(alignment_dir, exist_ok=True)
 
@@ -704,7 +730,11 @@ def combine_genes(args, samples):
                     continue
 
                 with open(in_path, 'r') as r:
-                    _, seq = next(SimpleFastaParser(r))
+                    try:
+                        _, seq = next(SimpleFastaParser(r))
+                    except StopIteration:
+                        continue
+
                     f.write(f'>{name}\n{seq}\n')
 
                 written = True
@@ -844,11 +874,13 @@ def combine_genes(args, samples):
 
     if not args.no_alignment:
         subprocess.run([merge_seq_bin, '-input', alignment_dir, '-exts', '.fasta', '-missing', '-',
-                        '-output', os.path.join(out_loc, 'combined_results.fasta')])
+                        '-output', os.path.join(out_loc, 'combined_results.fasta')],
+                       check=True)
 
         if alignment_filter != 'none':
             subprocess.run([merge_seq_bin, '-input', trim_dir, '-exts', '.fasta', '-missing', '-',
-                            '-output', os.path.join(out_loc, 'combined_trimed.fasta')])
+                            '-output', os.path.join(out_loc, 'combined_trimed.fasta')],
+                           check=True)
 
 def get_alignment_filter(args):
     if getattr(args, 'no_trimal', False):
@@ -885,6 +917,7 @@ def get_concatenated_alignment_path(args):
 
 def build_single_tree(prog_name, prog_bin, in_path, bootstrap=0, quiet=False, threads=1):
     if prog_name == 'raxmlng':
+        out_path = in_path + ".raxml.bestTree"
         params = [prog_bin, '--msa', in_path, '--msa-format', 'FASTA',
                   '--model', 'GTR+G', '--redo']
 
@@ -898,11 +931,15 @@ def build_single_tree(prog_name, prog_bin, in_path, bootstrap=0, quiet=False, th
         else:
             params.extend(['--threads', '1'])
 
-        subprocess.run(params, stdout=subprocess.DEVNULL if quiet else None)
+        if os.path.isfile(out_path):
+            os.remove(out_path)
 
-        return in_path + ".raxml.bestTree"
+        subprocess.run(params, stdout=subprocess.DEVNULL if quiet else None, check=True)
+
+        return out_path
 
     elif prog_name == 'iqtree':
+        out_path = in_path + ".treefile"
         params = [prog_bin, '-s', in_path, '-redo']
 
         if bootstrap:
@@ -916,12 +953,16 @@ def build_single_tree(prog_name, prog_bin, in_path, bootstrap=0, quiet=False, th
         else:
             params.extend(['-T', '1'])
 
-        subprocess.run(params, stdout=subprocess.DEVNULL if quiet else None)
+        if os.path.isfile(out_path):
+            os.remove(out_path)
 
-        return in_path + ".treefile"
+        subprocess.run(params, stdout=subprocess.DEVNULL if quiet else None, check=True)
+
+        return out_path
 
     elif prog_name == 'veryfasttree':
-        params = [prog_bin, '-out', in_path + ".veryfasttree.tre", '-gtr']
+        out_path = in_path + ".veryfasttree.tre"
+        params = [prog_bin, '-out', out_path, '-gtr']
 
         if bootstrap:
             params.extend(['-boot', str(bootstrap)])
@@ -936,12 +977,16 @@ def build_single_tree(prog_name, prog_bin, in_path, bootstrap=0, quiet=False, th
 
         params.extend(['-nt', in_path])
 
-        subprocess.run(params, stderr=subprocess.DEVNULL if quiet else None)
+        if os.path.isfile(out_path):
+            os.remove(out_path)
 
-        return in_path + ".veryfasttree.tre"
+        subprocess.run(params, stderr=subprocess.DEVNULL if quiet else None, check=True)
+
+        return out_path
 
     else:
-        params = [prog_bin, '-out', in_path + ".fasttree.tre", '-gtr']
+        out_path = in_path + ".fasttree.tre"
+        params = [prog_bin, '-out', out_path, '-gtr']
 
         if bootstrap:
             params.extend(['-boot', str(bootstrap)])
@@ -953,9 +998,12 @@ def build_single_tree(prog_name, prog_bin, in_path, bootstrap=0, quiet=False, th
 
         params.extend(['-nt', in_path])
 
-        subprocess.run(params, stderr=subprocess.DEVNULL if quiet else None)
+        if os.path.isfile(out_path):
+            os.remove(out_path)
 
-        return in_path + ".fasttree.tre"
+        subprocess.run(params, stderr=subprocess.DEVNULL if quiet else None, check=True)
+
+        return out_path
 
 def build_coalescent_tree(args):
     out_loc = args.o.strip()
@@ -1029,7 +1077,10 @@ def build_coalescent_tree(args):
     if not written:
         raise RuntimeError(f"Unable to reconstruct coalescent trees because no gene tree is available")
 
-    subprocess.run([astral_bin, '-i', coal_trees_path, '-o', coal_out_path, '-t', str(args.p)])
+    if os.path.isfile(coal_out_path):
+        os.remove(coal_out_path)
+
+    subprocess.run([astral_bin, '-i', coal_trees_path, '-o', coal_out_path, '-t', str(args.p)], check=True)
 
 def build_concatenation_tree(args):
     out_loc = args.o.strip()
@@ -1048,13 +1099,18 @@ def build_concatenation_tree(args):
     if not os.path.isfile(in_path):
         raise RuntimeError(f"Unable to find the concatenated alignment at '{in_path}'")
 
+    final_tree_path = os.path.join(out_loc, 'Concatenation.tree')
+
+    if os.path.isfile(final_tree_path):
+        os.remove(final_tree_path)
+
     out_path = build_single_tree(args.phylo_program, phylo_bin, in_path,
                                  bootstrap=args.bootstrap, threads=args.p)
 
     if not os.path.isfile(out_path):
         raise RuntimeError(f"Phylogenetic tree reconstruction failed")
 
-    shutil.copyfile(out_path, os.path.join(out_loc, 'Concatenation.tree'))
+    shutil.copyfile(out_path, final_tree_path)
 
 def execute_tasks(args, samples):
     if not os.path.isdir(args.r):
@@ -1104,7 +1160,7 @@ def execute_tasks(args, samples):
             else:
                 build_concatenation_tree(args)
 
-    except RuntimeError as e:
+    except (RuntimeError, subprocess.SubprocessError) as e:
         print(f'Error: {e}')
         return 1
 

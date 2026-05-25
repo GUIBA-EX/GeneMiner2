@@ -158,6 +158,21 @@ def gm2_iterator(f, suffix=''):
 
         yield (f'read_{read_id}{suffix}', seq_buf[:seq_len].decode("ascii"), phr_buf[:seq_len].decode("ascii") if has_phr else '')
 
+def linked_iterator(iterator, link_size):
+    while True:
+        linked_reads = []
+
+        for _ in range(link_size):
+            try:
+                linked_reads.append(next(iterator))
+            except StopIteration:
+                break
+
+        if not linked_reads:
+            break
+
+        yield tuple(linked_reads)
+
 def build_kmer_dict(ref_set, kmer_size, trans=FWD_TRANS, rtrans=REV_TRANS):
     # Values: 0=unused; 1=forward; 2=reverse; 3=both
     kmer_dict = collections.defaultdict(lambda: 0)
@@ -196,7 +211,7 @@ def copy_reads(name, out_dir, read_info, file_type):
         output_file = stack.enter_context(open(output_path, 'w'))
         output_file.writelines(format_func(tp) for linked_reads in zip(*read_iters) for tp in linked_reads)
 
-def run_length_filter(name, out_dir, ref_set, ref_length, read_info, file_type, kmer_size, keep_temporaries):
+def run_length_filter(name, out_dir, ref_set, ref_length, read_info, file_type, kmer_size, keep_temporaries, keep_linked_mates):
     RUN_LEN_CONST = 0.5772156649 / math.log(2) - 1.5
     THR_P95_2T = 1.96
     THR_1e5_1T = 3.74
@@ -319,19 +334,29 @@ def run_length_filter(name, out_dir, ref_set, ref_length, read_info, file_type, 
             if len(orient) == 2 and 1 <= orient[0] <= 2 and orient[0] == orient[1]:
                 continue
 
-            output_file.writelines(format_func(tp) for i, tp in enumerate(linked_reads) if orient[i])
+            if keep_linked_mates and len(linked_reads) == 2 and any(orient):
+                output_file.writelines(format_func(tp) for tp in linked_reads)
+            else:
+                output_file.writelines(format_func(tp) for i, tp in enumerate(linked_reads) if orient[i])
 
     return output_path
 
-def kmer_filter(name, out_dir, log_path, ref_set, ref_length, temp_path, file_type, kmer_size, min_depth, max_depth, max_size, keep_temporaries):
+def kmer_filter(name, out_dir, log_path, ref_set, ref_length, temp_path, file_type, kmer_size, min_depth, max_depth, max_size, keep_temporaries, keep_linked_mates):
     output_ext  = FILE_EXTENSION[file_type]
     output_path = os.path.join(out_dir, name + output_ext)
     format_func = FORMAT_FUNCTIONS[file_type]
     read_iter   = READ_ITERATORS[file_type]
     trans_table = FWD_TRANS
 
+    def read_matches(tp, kmer_dict):
+        return filter_read(tp[1].translate(trans_table), kmer_dict, kmer_size)
+
     with open(temp_path, 'r') as f:
-        total_length = sum(len(tp[1]) for tp in read_iter(f))
+        if keep_linked_mates:
+            total_length = sum(sum(len(tp[1]) for tp in linked_reads)
+                               for linked_reads in linked_iterator(read_iter(f), 2))
+        else:
+            total_length = sum(len(tp[1]) for tp in read_iter(f))
 
     coverage  = total_length / ref_length
     too_deep  = coverage > max_depth
@@ -358,9 +383,14 @@ def kmer_filter(name, out_dir, log_path, ref_set, ref_length, temp_path, file_ty
         kmer_dict = build_kmer_dict(ref_set, kmer_size)
 
         with open(temp_path, 'r') as f:
-            total_length = sum(len(tp[1])
-                               for tp in read_iter(f)
-                               if filter_read(tp[1].translate(trans_table), kmer_dict, kmer_size))
+            if keep_linked_mates:
+                total_length = sum(sum(len(tp[1]) for tp in linked_reads)
+                                   for linked_reads in linked_iterator(read_iter(f), 2)
+                                   if any(read_matches(tp, kmer_dict) for tp in linked_reads))
+            else:
+                total_length = sum(len(tp[1])
+                                   for tp in read_iter(f)
+                                   if read_matches(tp, kmer_dict))
 
         coverage  = total_length / ref_length
         too_deep  = coverage > max_depth
@@ -381,14 +411,24 @@ def kmer_filter(name, out_dir, log_path, ref_set, ref_length, temp_path, file_ty
     i = 0
 
     with open(temp_path, 'r') as f, open(output_path, 'w') as fo:
-        for tp in read_iter(f):
-            if filter_read(tp[1].translate(trans_table), kmer_dict, kmer_size):
-                i += 1
+        if keep_linked_mates:
+            for linked_reads in linked_iterator(read_iter(f), 2):
+                if any(read_matches(tp, kmer_dict) for tp in linked_reads):
+                    i += 1
 
-                if too_large and i % interval != 0:
-                    continue
+                    if too_large and i % interval != 0:
+                        continue
 
-                fo.write(format_func(tp))
+                    fo.writelines(format_func(tp) for tp in linked_reads)
+        else:
+            for tp in read_iter(f):
+                if read_matches(tp, kmer_dict):
+                    i += 1
+
+                    if too_large and i % interval != 0:
+                        continue
+
+                    fo.write(format_func(tp))
 
 def filter_gene(task):
     file_ext = os.path.splitext(task.read_path[0])[1]
@@ -418,19 +458,20 @@ def filter_gene(task):
     # On average, one of two clusters of biological k-mer matches is error-free
     tmp_path = run_length_filter(task.name, task.out_dir, ref_set, effective_len,
                                  task.read_path, file_type, max(task.kmer_size // 2, task.kmer_size - 13) | 1,
-                                 task.keep_temporaries)
+                                 task.keep_temporaries, task.keep_linked_mates and len(task.read_path) == 2)
 
     kmer_filter(task.name, task.out_dir, task.log_path,
                 ref_set, effective_len, tmp_path, file_type,
                 task.kmer_size, task.min_depth, task.max_depth,
-                task.max_size, task.keep_temporaries)
+                task.max_size, task.keep_temporaries, task.keep_linked_mates and len(task.read_path) == 2)
 
     if not task.keep_temporaries:
         os.unlink(tmp_path)
 
 Task = collections.namedtuple('Task', ('name', 'out_dir', 'ref_path', 'read_path',
                                        'log_path', 'min_depth', 'max_depth', 'max_size',
-                                       'copy_only', 'keep_temporaries', 'kmer_size'))
+                                       'copy_only', 'keep_temporaries', 'keep_linked_mates',
+                                       'kmer_size'))
 
 def run(args):
     tasks = []
@@ -442,7 +483,8 @@ def run(args):
 
         tasks.append(Task(name, out_dir, ref_path, read_dict[name], args.log_file,
                           args.min_depth, args.max_depth, args.max_size,
-                          args.copy_only, args.keep_temporaries, args.kmer_size))
+                          args.copy_only, args.keep_temporaries, args.keep_linked_mates,
+                          args.kmer_size))
 
     if args.processes > 1:
         with multiprocessing.Pool(args.processes) as pool:
@@ -479,6 +521,7 @@ if __name__ == '__main__':
     parser.add_argument('--max-size', default=6, help='Max allowed size in million bases', type=int)
     parser.add_argument('--copy-only', action='store_true', help='Interleave paired reads without filtering')
     parser.add_argument('--keep-temporaries', action='store_true', help='Keep temporary files')
+    parser.add_argument('--keep-linked-mates', action='store_true', help='For paired-end reads, keep both mates when either mate passes filtering')
     parser.add_argument('--use-gm2-format', action='store_true', help='Read reads from compressed binary format')
     parser.add_argument('-kf', '--kmer-size', default=31, help='K-mer size', type=int)
 
