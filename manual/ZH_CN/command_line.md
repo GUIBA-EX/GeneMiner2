@@ -90,6 +90,8 @@ cli/geneminer2 -f /home/user/GeneMiner2/DEMO/DEMO3/samples.tsv -r /home/user/Ang
 - `--assembly-mode`: 组装模式，可选`reference`或`uce`。`reference`为默认模式，保持原有基于参考序列的组装和边界控制；`uce`模式会放宽参考边界裁剪，并优先保留更长且有reads支持的UCE侧翼序列。
 - UCE组装模式下，refilter阶段会在任一端通过locus过滤时保留整对paired-end reads。这有助于保留与短UCE探针配对的侧翼reads。
 - `--uce-side-candidates`: UCE组装中每侧参与组合的分支候选数。数值越大，越可能保留较长的低支持侧翼候选，但会增加运行时间和候选路径数量。
+- `--uce-rescue-reads`: 仅用于UCE模式。初次组装后，用初步contig和原始参考序列再招募一次raw reads，然后重新进一步过滤并重新组装。
+- `--uce-rescue-min-contig-length`: 参与UCE raw-read rescue的初步contig最短长度。
 - `-c`: 一致性阈值（介于0-1的小数形式）
 - `-ts`: 基于参考切齐的来源序列，可以是`assembly`或`consensus`
 - `-tm`: 基于参考切齐的模式，可以是`all`、`longest`、`terminal`或`isoform`

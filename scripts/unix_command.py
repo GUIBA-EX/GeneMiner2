@@ -135,9 +135,73 @@ def prepare_workdir(args):
 
     return samples
 
+def write_fasta_record(out, header, sequence, line_width=80):
+    sequence = ''.join(sequence.split()).upper()
+
+    if not sequence:
+        return False
+
+    out.write(f'>{header}\n')
+
+    for i in range(0, len(sequence), line_width):
+        out.write(sequence[i:i + line_width] + '\n')
+
+    return True
+
+def build_uce_rescue_refs(ref_dir, sample_dir, rescue_ref_dir, min_contig_len):
+    results_dir = os.path.join(sample_dir, 'results')
+    added_contigs = 0
+
+    if not os.path.isdir(results_dir):
+        return 0
+
+    if os.path.isdir(rescue_ref_dir):
+        shutil.rmtree(rescue_ref_dir, ignore_errors=True)
+
+    os.makedirs(rescue_ref_dir, exist_ok=True)
+
+    with os.scandir(ref_dir) as entries:
+        for entry in entries:
+            if not entry.is_file():
+                continue
+
+            gene, ext = os.path.splitext(entry.name)
+
+            if ext not in ('.fa', '.fas', '.fasta'):
+                continue
+
+            contig_path = os.path.join(results_dir, f'{gene}.fasta')
+            rescue_path = os.path.join(rescue_ref_dir, f'{gene}.fasta')
+            contig_index = 0
+            wrote_any = False
+
+            with open(rescue_path, 'w') as out:
+                with open(entry.path, 'r') as ref_in:
+                    for title, seq in SimpleFastaParser(ref_in):
+                        wrote_any |= write_fasta_record(out, title, seq)
+
+                if os.path.isfile(contig_path):
+                    with open(contig_path, 'r') as contig_in:
+                        for _, seq in SimpleFastaParser(contig_in):
+                            if len(seq) < min_contig_len:
+                                continue
+
+                            contig_index += 1
+                            added_contigs += 1
+                            wrote_any |= write_fasta_record(out, f'{gene}_gm2_rescue_contig_{contig_index}', seq)
+
+            if not wrote_any:
+                os.remove(rescue_path)
+
+    return added_contigs
+
 def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignore_hook=lambda *_, **__: None):
     out_loc = args.o.strip()
     kmer_dict_path = os.path.join(out_loc, f'kmer_dict_k{args.kf}.dict')
+    rescue_enabled = args.uce_rescue_reads
+
+    if rescue_enabled and (args.assembly_mode != 'uce' or not do_filter or not do_refilter or not do_assemble):
+        raise RuntimeError('--uce-rescue-reads requires --assembly-mode uce and the filter, refilter and assemble steps')
 
     if args.soft_boundary == 'auto':
         soft_boundary = -1
@@ -232,9 +296,10 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
     if do_refilter:
         refilter_bin = find_executable('main_refilter_new', internal=True)
 
-        def run_refilter(name, thr=1):
+        def run_refilter(name, thr=1, ref_dir=None):
             in_dir  = os.path.join(out_loc, name, 'filtered_pe')
             out_dir = os.path.join(out_loc, name, 'filtered')
+            ref_dir = args.r if ref_dir is None else ref_dir
 
             if not os.path.isdir(in_dir):
                 raise RuntimeError('No successful filter run, cannot re-filter')
@@ -242,7 +307,7 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
             if os.path.isdir(out_dir):
                 shutil.rmtree(out_dir, ignore_errors=True)
 
-            params = [refilter_bin, '-r', args.r, '-qd', in_dir, '-o', out_dir, '-kf', str(args.kf),
+            params = [refilter_bin, '-r', ref_dir, '-qd', in_dir, '-o', out_dir, '-kf', str(args.kf),
                       '-p', str(thr), '--log-file', os.path.join(out_loc, name, 'log.txt'),
                       '--min-depth', str(args.depth_low_water_mark), '--max-depth', str(args.depth_limit),
                       '--max-size', str(args.file_size_limit), '--use-gm2-format']
@@ -293,6 +358,61 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
 
     else:
         run_assembler = ignore_hook
+
+    if rescue_enabled:
+        def run_uce_rescue(name, thr=1):
+            sample_dir = os.path.join(out_loc, name)
+            rescue_ref_dir = os.path.join(sample_dir, 'uce_rescue_refs')
+            rescue_kmer_dict_path = os.path.join(sample_dir, f'uce_rescue_kmer_dict_k{args.kf}.dict')
+            read_count_path = os.path.join(sample_dir, 'ref_reads_count_dict.txt')
+            filtered_pe_dir = os.path.join(sample_dir, 'filtered_pe')
+            filtered_dir = os.path.join(sample_dir, 'filtered')
+
+            added_contigs = build_uce_rescue_refs(args.r, sample_dir, rescue_ref_dir, args.uce_rescue_min_contig_length)
+
+            if added_contigs == 0:
+                print(f'No preliminary UCE contigs for {name}; skipping raw-read rescue.')
+                return
+
+            print(f'Running one-round UCE raw-read rescue for {name} using {added_contigs} preliminary contig(s).')
+
+            if os.path.isfile(rescue_kmer_dict_path):
+                os.remove(rescue_kmer_dict_path)
+
+            try:
+                subprocess.run([filter_bin, '-r', rescue_ref_dir, '-o', sample_dir, '-kf', str(args.kf),
+                                '-s', str(args.step_size), '-gr', '-lkd', rescue_kmer_dict_path, '-m', '2'],
+                               check=True)
+            except subprocess.SubprocessError as e:
+                raise RuntimeError(f"Unable to build UCE rescue k-mer dictionary: {e}")
+
+            q1, q2 = samples[name]
+
+            if os.path.isfile(read_count_path):
+                os.remove(read_count_path)
+
+            if os.path.isdir(filtered_pe_dir):
+                shutil.rmtree(filtered_pe_dir, ignore_errors=True)
+
+            if os.path.isdir(filtered_dir):
+                shutil.rmtree(filtered_dir, ignore_errors=True)
+
+            params = [filter_bin, '-r', rescue_ref_dir, '-q1', q1, '-q2', q2, '-o', sample_dir,
+                      '-kf', str(args.kf), '-s', str(args.step_size), '-gr', '-subdir', 'filtered_pe',
+                      '-m', '5', '-lb', '-lkd', rescue_kmer_dict_path]
+
+            if args.max_reads > 0:
+                params.extend(['-m_reads', str(args.max_reads)])
+
+            subprocess.run(params, check=True)
+
+            if not os.path.isfile(read_count_path):
+                raise RuntimeError('UCE rescue filter failed')
+
+            run_refilter(name, thr=thr, ref_dir=rescue_ref_dir)
+            run_assembler(name, thr=thr)
+    else:
+        run_uce_rescue = ignore_hook
 
     if args.p > 1:
         avail_cpu = args.p
@@ -386,6 +506,14 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
                     run_assembler(name)
             except Exception as e:
                 print(f'An error occurred while processing {name}: {e}')
+                continue
+
+    if rescue_enabled:
+        for name in samples.keys():
+            try:
+                run_uce_rescue(name, thr=max(args.p, 1))
+            except Exception as e:
+                print(f'An error occurred during UCE raw-read rescue for {name}: {e}')
                 continue
 
 def make_phyluce_sample_name(sample):
@@ -1202,6 +1330,8 @@ if __name__ == '__main__':
     group_assembly.add_argument('--min-coverage', default=0, help='Minimum read depth required for contig generation', metavar='INT', type=int)
     group_assembly.add_argument('--assembly-mode', choices=('reference', 'uce'), default='reference', help='Assembly mode: reference keeps the default reference-guided behavior; uce preserves read-supported flanks around conserved cores')
     group_assembly.add_argument('--uce-side-candidates', default=8, help='One-sided branch candidates to combine in UCE mode (default = 8)', metavar='INT', type=int)
+    group_assembly.add_argument('--uce-rescue-reads', action='store_true', default=False, help='UCE mode only: after the first assembly, recruit raw reads once using preliminary contigs plus original references, then re-filter and re-assemble')
+    group_assembly.add_argument('--uce-rescue-min-contig-length', default=60, help='Minimum preliminary contig length used as a UCE raw-read rescue reference (default = 60)', metavar='INT', type=int)
 
     group_consensus = parser.add_argument_group('argument for consensus generation')
     group_consensus.add_argument('-c', '--consensus-threshold', default='0.75', help='Consensus threshold (default = 0.75)', metavar='FLOAT', type=float)
@@ -1234,6 +1364,7 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
     args.uce_side_candidates = max(args.uce_side_candidates, 3)
+    args.uce_rescue_min_contig_length = max(args.uce_rescue_min_contig_length, args.kf)
 
     if args.no_trimal and args.alignment_filter not in (None, 'none'):
         parser.error('--no-trimal cannot be combined with --alignment-filter trimal or --alignment-filter alifilter')
