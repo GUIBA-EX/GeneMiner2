@@ -1,10 +1,10 @@
 # Command Line Interface
 
-For most users of upstream GeneMiner2, downloading prebuilt binaries from Sourceforge is sufficient. The UCE, AliFilter, and combine-stage performance options documented here are fork-specific command-line features; use this repository's scripts or build the CLI from this repository to access them. Refer to [Usage](#usage) to see the documentation.
+This repository contains only the command-line GeneMiner2 workflow. GUI project files, GUI documentation, screenshots, and bundled demo datasets have been removed.
 
 ## Building from Source
 
-Building GeneMiner2 from source is not trivial. Most users of upstream GeneMiner2 can try the prebuilt `.tar.gz` package from Sourceforge. The fork-specific UCE, AliFilter, and combine-stage performance options require running this repository's scripts or building the CLI from this repository. The rest of this section is for advanced users. Please refer to [Usage](#usage) for command-line parameters.
+Building the full CLI bundle from source requires Haxe, a C++ compiler, Python, and PyInstaller. If you only need to inspect or modify the workflow, the Python scripts in `scripts/` can also be run directly with the required dependencies installed. Please refer to [Usage](#usage) for command-line parameters.
 
 First, install the default C++ compiler and [zlib](https://zlib.net/) for the platform. On Ubuntu 20.04 and later, this can be done as follows:
 
@@ -49,26 +49,23 @@ AliFilter can be used as an optional alignment filtering program. It is not inst
 
 To run an analysis, GeneMiner2 requires a tab-delimited sample list and reference sequences in FASTA format. The sample list has the format `<Species Name><Tab><Read File 1>` (single read) or `<Species Name><Tab><Read File 1><Tab><Read File 2>` (paired-end reads), each line denoting a sample.
 
-Assuming the repository is cloned to `/home/user/GeneMiner2`, the sample list for [DEMO 3](../../DEMO/DEMO3/DEMO3.md) looks as follows:
+For paired-end reads, a sample list looks as follows:
 
 ```
-Bupleurum_chinense	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_chinense_1.fq.gz	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_chinense_2.fq.gz
-Bupleurum_fruticosum	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_fruticosum_1.fq.gz	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_fruticosum_2.fq.gz
-Bupleurum_krylovianum	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_krylovianum_1.fq.gz	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_krylovianum_2.fq.gz
-Bupleurum_malconense	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_malconense_1.fq.gz	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_malconense_2.fq.gz
-Bupleurum_wenchuanense	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_wenchuanense_1.fq.gz	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_wenchuanense_2.fq.gz
-Bupleurum_yunnanense	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_yunnanense_1.fq.gz	/home/user/GeneMiner2/DEMO/DEMO3/DATA/PLANT/Bupleurum_yunnanense_2.fq.gz
+Sample_A	/data/reads/Sample_A_R1.fq.gz	/data/reads/Sample_A_R2.fq.gz
+Sample_B	/data/reads/Sample_B_R1.fq.gz	/data/reads/Sample_B_R2.fq.gz
+Sample_C	/data/reads/Sample_C_R1.fq.gz	/data/reads/Sample_C_R2.fq.gz
 ```
 
 The reference sequences have to be under a separate directory. For each gene, place all of its reference sequences in `<Gene Name>.fasta`. For example, to extract matK and psbA genes, create `matK.fasta` and `psbA.fasta` under an empty directory, and write reference sequences into the respective file.
 
-Next, assuming the sample list is saved to `/home/user/GeneMiner2/DEMO/DEMO3/samples.tsv`, Angiosperms353 genes saved under `/home/user/Angiosperms353`, and the desired output location `/home/user/GeneMiner2/DEMO/DEMO3/output`, run GeneMiner2 with default settings:
+Next, assuming the sample list is saved to `/home/user/project/samples.tsv`, reference loci are saved under `/home/user/project/references`, and the desired output location is `/home/user/project/output`, run GeneMiner2 with default settings:
 
 ```
-cli/geneminer2 -f /home/user/GeneMiner2/DEMO/DEMO3/samples.tsv -r /home/user/Angiosperms353 -o /home/user/GeneMiner2/DEMO/DEMO3/output
+cli/geneminer2 -f /home/user/project/samples.tsv -r /home/user/project/references -o /home/user/project/output
 ```
 
-GeneMiner2 will build a coalescent tree at `/home/user/GeneMiner2/DEMO/DEMO3/output/Coalescent.tree`.
+GeneMiner2 will build a coalescent tree at `/home/user/project/output/Coalescent.tree`.
 
 When `--assembly-mode uce` is used without explicit subcommands, the default workflow skips the reference-based `trim` step and runs `filter refilter assemble combine tree`. This prevents newly recovered UCE flanking regions from being trimmed again during reference-based trimming. Add the `trim` subcommand explicitly if reference-based trimming is still desired.
 
@@ -113,7 +110,7 @@ Command line parameters:
 For example, after running the command above, you can ask GeneMiner2 to build a concatenation tree based on previous results using `tree` subcommand and `-m concatenation` argument:
 
 ```
-cli/geneminer2 tree -f /home/user/GeneMiner2/DEMO/DEMO3/samples.tsv -r /home/user/Angiosperm353 -o /home/user/GeneMiner2/DEMO/DEMO3/output -m concatenation
+cli/geneminer2 tree -f /home/user/project/samples.tsv -r /home/user/project/references -o /home/user/project/output -m concatenation
 ```
 
 Similarly, it is also possible to ask GeneMiner2 to run specific steps. For example, given these parameters:
@@ -130,7 +127,7 @@ Similarly, it is also possible to ask GeneMiner2 to run specific steps. For exam
 The following line runs **Trim With Reference** and **Combine Results**:
 
 ```
-cli/geneminer2 trim combine -f /home/user/GeneMiner2/DEMO/DEMO3/samples.tsv -r /mnt/data/Angiosperm353 -o /home/user/GeneMiner2/DEMO/DEMO3/output -ts consensus -tm all -tr 0.5 -cd 0.2 -cn 5 --msa-program muscle
+cli/geneminer2 trim combine -f /home/user/project/samples.tsv -r /home/user/project/references -o /home/user/project/output -ts consensus -tm all -tr 0.5 -cd 0.2 -cn 5 --msa-program muscle
 ```
 
-All parameters and output are analogus to their counterparts in the graphical version, except that the command line interface only accepts decimal values between 0.0 and 1.0 for percentages. Additionally, several internal options (such as `--min-coverage`) are also exposed, providing extra flexibility for advanced users.
+The command-line interface accepts decimal values between 0.0 and 1.0 for percentage-like thresholds. Several internal options, such as `--min-coverage`, are also exposed for advanced users.
