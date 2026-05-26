@@ -225,6 +225,35 @@ def delta_or_blank(after, before):
 
     return after_value - before_value
 
+def read_density_or_blank(row):
+    length = int_or_blank(row.get('selected_contig_length'))
+    read_count = int_or_blank(row.get('read_count'))
+
+    if length == '' or read_count == '' or length <= 0:
+        return ''
+
+    return read_count / length
+
+def rescue_density_decreased(before, after):
+    before_density = read_density_or_blank(before)
+    after_density = read_density_or_blank(after)
+
+    if before_density == '' or after_density == '':
+        return False
+
+    return after_density < before_density
+
+UCE_ASSEMBLY_SUMMARY_FIELDS = [
+    'locus',
+    'status',
+    'selected_contig_length',
+    'read_supported_span',
+    'read_count',
+    'flank_balance',
+    'candidate_count',
+    'low_quality',
+]
+
 UCE_RESCUE_SUMMARY_FIELDS = [
     'sample',
     'locus',
@@ -253,9 +282,64 @@ SAMPLE_STATE_BACKUP_ITEMS = [
     'ref_reads_count_dict.txt',
 ]
 
-def write_sample_uce_rescue_summary(sample_dir, sample, before_rows, after_rows, rescue_status, error=''):
+def write_uce_assembly_summary_rows(summary_path, rows):
+    with open(summary_path, 'w', newline='') as out:
+        writer = csv.DictWriter(out, fieldnames=UCE_ASSEMBLY_SUMMARY_FIELDS)
+        writer.writeheader()
+
+        for locus in sorted(rows):
+            row = rows[locus]
+            writer.writerow({field: row.get(field, '') for field in UCE_ASSEMBLY_SUMMARY_FIELDS})
+
+def write_result_dict_from_uce_summary(sample_dir, rows):
+    result_path = os.path.join(sample_dir, 'result_dict.txt')
+
+    with open(result_path, 'w') as out:
+        for locus in sorted(rows):
+            row = rows[locus]
+
+            if row.get('status') == 'skipped':
+                continue
+
+            out.write(f"{locus},{row.get('status', '')},{row.get('read_count', '')},\n")
+
+def restore_locus_file(sample_dir, backup_dir, subdir, locus):
+    rel_path = os.path.join(subdir, f'{locus}.fasta')
+    src = os.path.join(backup_dir, rel_path)
+    dest = os.path.join(sample_dir, rel_path)
+
+    if os.path.isfile(src):
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        shutil.copy2(src, dest)
+    elif os.path.isfile(dest):
+        os.remove(dest)
+
+def revert_density_drop_loci(sample_dir, backup_dir, before_rows, after_rows):
+    reverted = set()
+
+    for locus, before in before_rows.items():
+        after = after_rows.get(locus)
+
+        if not after or not rescue_density_decreased(before, after):
+            continue
+
+        for subdir in ('results', 'contigs_all', 'contigs_all_low'):
+            restore_locus_file(sample_dir, backup_dir, subdir, locus)
+
+        after_rows[locus] = before.copy()
+        reverted.add(locus)
+
+    if reverted:
+        write_uce_assembly_summary_rows(os.path.join(sample_dir, 'uce_assembly_summary.csv'), after_rows)
+        write_result_dict_from_uce_summary(sample_dir, after_rows)
+
+    return reverted
+
+def write_sample_uce_rescue_summary(sample_dir, sample, before_rows, after_rows, rescue_status, error='', status_by_locus=None, error_by_locus=None):
     out_path = os.path.join(sample_dir, 'uce_rescue_summary.csv')
     loci = sorted(set(before_rows) | set(after_rows))
+    status_by_locus = {} if status_by_locus is None else status_by_locus
+    error_by_locus = {} if error_by_locus is None else error_by_locus
 
     with open(out_path, 'w', newline='') as out:
         writer = csv.DictWriter(out, fieldnames=UCE_RESCUE_SUMMARY_FIELDS)
@@ -272,7 +356,7 @@ def write_sample_uce_rescue_summary(sample_dir, sample, before_rows, after_rows,
             writer.writerow({
                 'sample': sample,
                 'locus': locus,
-                'rescue_status': rescue_status,
+                'rescue_status': status_by_locus.get(locus, rescue_status),
                 'before_status': before.get('status', ''),
                 'after_status': after.get('status', ''),
                 'before_length': before_length,
@@ -283,7 +367,7 @@ def write_sample_uce_rescue_summary(sample_dir, sample, before_rows, after_rows,
                 'read_count_delta': delta_or_blank(after_count, before_count),
                 'before_read_supported_span': before.get('read_supported_span', ''),
                 'after_read_supported_span': after.get('read_supported_span', ''),
-                'error': error,
+                'error': error_by_locus.get(locus, error),
             })
 
 def backup_sample_state(sample_dir):
@@ -571,9 +655,15 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
                 raise
 
             else:
-                discard_sample_state_backup(backup_dir)
                 after_rows = read_uce_summary(summary_path)
-                write_sample_uce_rescue_summary(sample_dir, name, before_rows, after_rows, 'success')
+                reverted_loci = revert_density_drop_loci(sample_dir, backup_dir, before_rows, after_rows)
+                status_by_locus = {locus: 'reverted_density_drop' for locus in reverted_loci}
+                error_by_locus = {
+                    locus: 'read density decreased after rescue; first-round contig restored'
+                    for locus in reverted_loci
+                }
+                write_sample_uce_rescue_summary(sample_dir, name, before_rows, after_rows, 'success', status_by_locus=status_by_locus, error_by_locus=error_by_locus)
+                discard_sample_state_backup(backup_dir)
     else:
         run_uce_rescue = ignore_hook
 
