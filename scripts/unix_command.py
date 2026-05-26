@@ -195,10 +195,155 @@ def build_uce_rescue_refs(ref_dir, sample_dir, rescue_ref_dir, min_contig_len):
 
     return added_contigs
 
+def read_uce_summary(summary_path):
+    rows = {}
+
+    if not os.path.isfile(summary_path):
+        return rows
+
+    with open(summary_path, newline='') as f:
+        for row in csv.DictReader(f):
+            locus = row.get('locus')
+
+            if locus:
+                rows[locus] = row
+
+    return rows
+
+def int_or_blank(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return ''
+
+def delta_or_blank(after, before):
+    after_value = int_or_blank(after)
+    before_value = int_or_blank(before)
+
+    if after_value == '' or before_value == '':
+        return ''
+
+    return after_value - before_value
+
+UCE_RESCUE_SUMMARY_FIELDS = [
+    'sample',
+    'locus',
+    'rescue_status',
+    'before_status',
+    'after_status',
+    'before_length',
+    'after_length',
+    'length_delta',
+    'before_read_count',
+    'after_read_count',
+    'read_count_delta',
+    'before_read_supported_span',
+    'after_read_supported_span',
+    'error',
+]
+
+SAMPLE_STATE_BACKUP_ITEMS = [
+    'results',
+    'result_dict.txt',
+    'uce_assembly_summary.csv',
+    'contigs_all',
+    'contigs_all_low',
+    'filtered',
+    'filtered_pe',
+    'ref_reads_count_dict.txt',
+]
+
+def write_sample_uce_rescue_summary(sample_dir, sample, before_rows, after_rows, rescue_status, error=''):
+    out_path = os.path.join(sample_dir, 'uce_rescue_summary.csv')
+    loci = sorted(set(before_rows) | set(after_rows))
+
+    with open(out_path, 'w', newline='') as out:
+        writer = csv.DictWriter(out, fieldnames=UCE_RESCUE_SUMMARY_FIELDS)
+        writer.writeheader()
+
+        for locus in loci:
+            before = before_rows.get(locus, {})
+            after = after_rows.get(locus, {})
+            before_length = before.get('selected_contig_length', '')
+            after_length = after.get('selected_contig_length', '')
+            before_count = before.get('read_count', '')
+            after_count = after.get('read_count', '')
+
+            writer.writerow({
+                'sample': sample,
+                'locus': locus,
+                'rescue_status': rescue_status,
+                'before_status': before.get('status', ''),
+                'after_status': after.get('status', ''),
+                'before_length': before_length,
+                'after_length': after_length,
+                'length_delta': delta_or_blank(after_length, before_length),
+                'before_read_count': before_count,
+                'after_read_count': after_count,
+                'read_count_delta': delta_or_blank(after_count, before_count),
+                'before_read_supported_span': before.get('read_supported_span', ''),
+                'after_read_supported_span': after.get('read_supported_span', ''),
+                'error': error,
+            })
+
+def backup_sample_state(sample_dir):
+    backup_dir = os.path.join(sample_dir, '.uce_rescue_backup')
+
+    if os.path.isdir(backup_dir):
+        shutil.rmtree(backup_dir, ignore_errors=True)
+
+    os.makedirs(backup_dir, exist_ok=True)
+
+    for item in SAMPLE_STATE_BACKUP_ITEMS:
+        src = os.path.join(sample_dir, item)
+
+        if os.path.exists(src):
+            shutil.move(src, os.path.join(backup_dir, item))
+
+    return backup_dir
+
+def restore_sample_state(sample_dir, backup_dir):
+    if not os.path.isdir(backup_dir):
+        return
+
+    for item in SAMPLE_STATE_BACKUP_ITEMS:
+        dest = os.path.join(sample_dir, item)
+
+        if os.path.isdir(dest):
+            shutil.rmtree(dest, ignore_errors=True)
+        elif os.path.isfile(dest):
+            os.remove(dest)
+
+    with os.scandir(backup_dir) as entries:
+        for entry in entries:
+            dest = os.path.join(sample_dir, entry.name)
+            shutil.move(entry.path, dest)
+
+    shutil.rmtree(backup_dir, ignore_errors=True)
+
+def discard_sample_state_backup(backup_dir):
+    if os.path.isdir(backup_dir):
+        shutil.rmtree(backup_dir, ignore_errors=True)
+
+def write_failed_samples(out_loc, failures):
+    out_path = os.path.join(out_loc, 'failed_samples.tsv')
+
+    if not failures:
+        if os.path.isfile(out_path):
+            os.remove(out_path)
+
+        return
+
+    with open(out_path, 'w', newline='') as out:
+        writer = csv.writer(out, delimiter='\t')
+        writer.writerow(['sample', 'stage', 'error'])
+        writer.writerows(failures)
+
 def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignore_hook=lambda *_, **__: None):
     out_loc = args.o.strip()
     kmer_dict_path = os.path.join(out_loc, f'kmer_dict_k{args.kf}.dict')
     rescue_enabled = args.uce_rescue_reads
+    failed_samples = []
 
     if rescue_enabled and (args.assembly_mode != 'uce' or not do_filter or not do_refilter or not do_assemble):
         raise RuntimeError('--uce-rescue-reads requires --assembly-mode uce and the filter, refilter and assemble steps')
@@ -364,53 +509,65 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
             sample_dir = os.path.join(out_loc, name)
             rescue_ref_dir = os.path.join(sample_dir, 'uce_rescue_refs')
             rescue_kmer_dict_path = os.path.join(sample_dir, f'uce_rescue_kmer_dict_k{args.kf}.dict')
+            summary_path = os.path.join(sample_dir, 'uce_assembly_summary.csv')
             read_count_path = os.path.join(sample_dir, 'ref_reads_count_dict.txt')
             filtered_pe_dir = os.path.join(sample_dir, 'filtered_pe')
             filtered_dir = os.path.join(sample_dir, 'filtered')
 
+            before_rows = read_uce_summary(summary_path)
             added_contigs = build_uce_rescue_refs(args.r, sample_dir, rescue_ref_dir, args.uce_rescue_min_contig_length)
 
             if added_contigs == 0:
                 print(f'No preliminary UCE contigs for {name}; skipping raw-read rescue.')
+                write_sample_uce_rescue_summary(sample_dir, name, before_rows, before_rows, 'skipped')
                 return
 
             print(f'Running one-round UCE raw-read rescue for {name} using {added_contigs} preliminary contig(s).')
-
-            if os.path.isfile(rescue_kmer_dict_path):
-                os.remove(rescue_kmer_dict_path)
+            backup_dir = backup_sample_state(sample_dir)
 
             try:
+                if os.path.isfile(rescue_kmer_dict_path):
+                    os.remove(rescue_kmer_dict_path)
+
                 subprocess.run([filter_bin, '-r', rescue_ref_dir, '-o', sample_dir, '-kf', str(args.kf),
                                 '-s', str(args.step_size), '-gr', '-lkd', rescue_kmer_dict_path, '-m', '2'],
                                check=True)
-            except subprocess.SubprocessError as e:
-                raise RuntimeError(f"Unable to build UCE rescue k-mer dictionary: {e}")
 
-            q1, q2 = samples[name]
+                q1, q2 = samples[name]
 
-            if os.path.isfile(read_count_path):
-                os.remove(read_count_path)
+                if os.path.isfile(read_count_path):
+                    os.remove(read_count_path)
 
-            if os.path.isdir(filtered_pe_dir):
-                shutil.rmtree(filtered_pe_dir, ignore_errors=True)
+                if os.path.isdir(filtered_pe_dir):
+                    shutil.rmtree(filtered_pe_dir, ignore_errors=True)
 
-            if os.path.isdir(filtered_dir):
-                shutil.rmtree(filtered_dir, ignore_errors=True)
+                if os.path.isdir(filtered_dir):
+                    shutil.rmtree(filtered_dir, ignore_errors=True)
 
-            params = [filter_bin, '-r', rescue_ref_dir, '-q1', q1, '-q2', q2, '-o', sample_dir,
-                      '-kf', str(args.kf), '-s', str(args.step_size), '-gr', '-subdir', 'filtered_pe',
-                      '-m', '5', '-lb', '-lkd', rescue_kmer_dict_path]
+                params = [filter_bin, '-r', rescue_ref_dir, '-q1', q1, '-q2', q2, '-o', sample_dir,
+                          '-kf', str(args.kf), '-s', str(args.step_size), '-gr', '-subdir', 'filtered_pe',
+                          '-m', '5', '-lb', '-lkd', rescue_kmer_dict_path]
 
-            if args.max_reads > 0:
-                params.extend(['-m_reads', str(args.max_reads)])
+                if args.max_reads > 0:
+                    params.extend(['-m_reads', str(args.max_reads)])
 
-            subprocess.run(params, check=True)
+                subprocess.run(params, check=True)
 
-            if not os.path.isfile(read_count_path):
-                raise RuntimeError('UCE rescue filter failed')
+                if not os.path.isfile(read_count_path):
+                    raise RuntimeError('UCE rescue filter failed')
 
-            run_refilter(name, thr=thr, ref_dir=rescue_ref_dir)
-            run_assembler(name, thr=thr)
+                run_refilter(name, thr=thr, ref_dir=rescue_ref_dir)
+                run_assembler(name, thr=thr)
+
+            except Exception as e:
+                restore_sample_state(sample_dir, backup_dir)
+                write_sample_uce_rescue_summary(sample_dir, name, before_rows, before_rows, 'failed_rolled_back', str(e))
+                raise
+
+            else:
+                discard_sample_state_backup(backup_dir)
+                after_rows = read_uce_summary(summary_path)
+                write_sample_uce_rescue_summary(sample_dir, name, before_rows, after_rows, 'success')
     else:
         run_uce_rescue = ignore_hook
 
@@ -479,6 +636,7 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
                     task.result()
                 except Exception as e:
                     print(f'An error occurred while processing {sample}: {e}')
+                    failed_samples.append((sample, {1: 'filter', 2: 'refilter', 3: 'assemble'}.get(stage, 'unknown'), str(e)))
                     continue
 
                 if stage == 1:
@@ -506,6 +664,7 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
                     run_assembler(name)
             except Exception as e:
                 print(f'An error occurred while processing {name}: {e}')
+                failed_samples.append((name, 'filter/refilter/assemble', str(e)))
                 continue
 
     if rescue_enabled:
@@ -514,7 +673,13 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
                 run_uce_rescue(name, thr=max(args.p, 1))
             except Exception as e:
                 print(f'An error occurred during UCE raw-read rescue for {name}: {e}')
+                failed_samples.append((name, 'uce_rescue', str(e)))
                 continue
+
+    write_failed_samples(out_loc, failed_samples)
+
+    if failed_samples:
+        raise RuntimeError(f'{len(failed_samples)} sample task(s) failed; see {os.path.join(out_loc, "failed_samples.tsv")}')
 
 def make_phyluce_sample_name(sample):
     name = ''.join(c if ord(c) < 128 and (c.isalnum() or c == '_') else '_' for c in sample).strip('_')
@@ -618,9 +783,35 @@ def write_uce_assembly_summary(args, samples):
                     row['sample'] = sample
                     writer.writerow({name: row.get(name, '') for name in fieldnames})
 
+def write_uce_rescue_summary(args, samples):
+    out_loc = args.o.strip()
+    out_path = os.path.join(out_loc, 'uce_rescue_summary.csv')
+    wrote_any = False
+
+    with open(out_path, 'w', newline='') as out:
+        writer = csv.DictWriter(out, fieldnames=UCE_RESCUE_SUMMARY_FIELDS)
+        writer.writeheader()
+
+        for sample in samples.keys():
+            summary_path = os.path.join(out_loc, sample, 'uce_rescue_summary.csv')
+
+            if not os.path.isfile(summary_path):
+                continue
+
+            with open(summary_path, newline='') as f:
+                for row in csv.DictReader(f):
+                    writer.writerow({name: row.get(name, '') for name in UCE_RESCUE_SUMMARY_FIELDS})
+                    wrote_any = True
+
+    if not wrote_any:
+        os.remove(out_path)
+
 def write_uce_outputs(args, samples):
     write_uce_contigs_for_phyluce(args, samples)
     write_uce_assembly_summary(args, samples)
+
+    if args.uce_rescue_reads:
+        write_uce_rescue_summary(args, samples)
 
 def generate_consensus(args, samples):
     out_loc = args.o.strip()
