@@ -1503,6 +1503,28 @@ def build_single_tree(prog_name, prog_bin, in_path, bootstrap=0, quiet=False, th
 
         return out_path
 
+def run_gene_tree_job(gene, alignment_dir, make_gene_tree):
+    in_path = os.path.join(alignment_dir, f'{gene}.fasta')
+
+    try:
+        return gene, in_path, make_gene_tree(gene), ''
+    except Exception as e:
+        return gene, in_path, None, str(e)
+
+def write_failed_gene_trees(out_loc, failures):
+    out_path = os.path.join(out_loc, 'failed_gene_trees.tsv')
+
+    if not failures:
+        if os.path.isfile(out_path):
+            os.remove(out_path)
+
+        return
+
+    with open(out_path, 'w', newline='') as out:
+        writer = csv.writer(out, delimiter='\t')
+        writer.writerow(['locus', 'alignment', 'error'])
+        writer.writerows(failures)
+
 def build_coalescent_tree(args):
     out_loc = args.o.strip()
 
@@ -1537,26 +1559,36 @@ def build_coalescent_tree(args):
 
     tree_files = set()
 
+    failed_gene_trees = []
+
+    def handle_gene_tree_result(result):
+        gene, alignment_path, tree_path, error = result
+
+        if error:
+            print(f'Warning: gene tree failed on {gene}: {error}')
+            failed_gene_trees.append((gene, alignment_path, error))
+            return
+
+        if tree_path and os.path.isfile(tree_path):
+            tree_files.add(tree_path)
+            tree_count = len(tree_files)
+
+            if tree_count >= 2:
+                print(f'{tree_count}/{gene_count} trees built\r', end='')
+
     if args.p > 1:
         with ThreadPoolExecutor(max_workers=args.p) as executor:
-            for tree_path in executor.map(make_gene_tree, genes):
-                if os.path.isfile(tree_path):
-                    tree_files.add(tree_path)
-                    tree_count = len(tree_files)
+            futures = [executor.submit(run_gene_tree_job, gene, alignment_dir, make_gene_tree) for gene in genes]
 
-                    if tree_count >= 2:
-                        print(f'{tree_count}/{gene_count} trees built\r', end='')
+            for task in as_completed(futures):
+                handle_gene_tree_result(task.result())
 
     else:
-        for tree_path in map(make_gene_tree, genes):
-            if os.path.isfile(tree_path):
-                tree_files.add(tree_path)
-                tree_count = len(tree_files)
-
-                if tree_count >= 2:
-                    print(f'{tree_count}/{gene_count} trees built\r', end='')
+        for gene in genes:
+            handle_gene_tree_result(run_gene_tree_job(gene, alignment_dir, make_gene_tree))
 
     print('\n')
+    write_failed_gene_trees(out_loc, failed_gene_trees)
 
     coal_trees_path = os.path.join(out_loc, 'combined_genes.trees')
     coal_out_path = os.path.join(out_loc, 'Coalescent.tree')
