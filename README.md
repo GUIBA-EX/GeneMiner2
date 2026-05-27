@@ -4,6 +4,8 @@
 
 This repository is a command-line focused fork of GeneMiner2 for target-enrichment and UCE workflows. GUI project files, graphical interface documentation, screenshots, and bundled demo datasets have been removed so the repository only contains the CLI source, build files, and command-line documentation.
 
+This fork is not distributed as an installable Python package. Build the standalone CLI with `make`, then run `cli/geneminer2`. After every `git pull`, rebuild with `make`; otherwise the generated executable may still contain older code.
+
 ## Main Features
 
 - Reference-guided marker recovery from next-generation sequencing reads.
@@ -12,6 +14,83 @@ This repository is a command-line focused fork of GeneMiner2 for target-enrichme
 - phyluce-compatible UCE contig export under `uce_contigs/`.
 - Optional AliFilter alignment filtering through `--alignment-filter alifilter`.
 - Controlled combine-stage parallelism through `--msa-threads` and `--filter-processes`.
+
+## Changes in This Fork
+
+This fork keeps the original GeneMiner2 reference-guided recovery model, but adjusts the command-line workflow for UCE loci, where the bait/probe sequence can be short and the useful phylogenetic signal often comes from flanking sequence.
+
+### CLI-only layout
+
+The GUI project, screenshots, bundled demo data, and large historical files have been removed from the active repository. The project is intentionally kept as a small source tree plus `Makefile` build. There is no Python `console_scripts` entry point and no `pyproject.toml`; use the generated `cli/geneminer2` executable after building.
+
+### UCE assembly mode
+
+`--assembly-mode uce` changes the assembly behavior so GeneMiner2 is less likely to trim contigs back to the short reference/probe interval. In UCE mode, the assembler prefers longer candidates that still have read support, and the default command set skips the reference-based `trim` step unless `trim` is requested explicitly.
+
+Recommended UCE-oriented assembly options are:
+
+```bash
+--assembly-mode uce \
+-sb unlimited \
+-ka 0 \
+--min-ka 17 \
+--max-ka 31 \
+-e 1
+```
+
+These settings keep boundary trimming permissive, allow automatic assembly k-mer selection over a lower range, and reduce the k-mer count threshold. They are designed for short UCE baits and divergent samples, but they can also admit noisier candidates, so the rescue summary and downstream alignments should still be inspected.
+
+### Paired-end mate retention
+
+In UCE mode, the re-filtering step keeps a paired-end read pair when either mate passes the locus filter. This is important for short probes: one mate may overlap the conserved UCE core while the other extends into the flanking region. Keeping the pair gives the assembler more information for contig extension.
+
+### One-round raw-read rescue
+
+`--uce-rescue-reads` runs one additional recruitment round after the first assembly:
+
+1. Build temporary rescue references from the original locus reference plus the first-round contig.
+2. Re-filter raw reads against these rescue references.
+3. Re-run re-filtering and assembly using the rescue references.
+4. Compare the rescue result with the first-round result.
+
+The rescue stage uses controlled parallelism: up to four samples are rescued at the same time, with up to four threads per sample. This avoids launching too many independent read-filtering jobs when many samples are present.
+
+### Density-ratio rollback
+
+Raw-read rescue can occasionally create very long but weakly supported contigs. To avoid accepting those artifacts, this fork compares read density before and after rescue:
+
+```text
+before_density = before_read_count / before_contig_length
+rescue_density = rescue_read_count / rescue_contig_length
+density_ratio = rescue_density / before_density
+```
+
+By default, a rescue result is rejected only when:
+
+```text
+density_ratio < 0.5
+```
+
+Rejected loci are restored to the first-round contig and are marked as `reverted_density_drop` in `uce_rescue_summary.csv`. The threshold can be changed with:
+
+```bash
+--uce-rescue-min-density-ratio 0.5
+```
+
+The rescue summary records `before_read_density`, `after_read_density`, and `density_ratio`, so the reason for rollback is visible. The `after_*` columns describe the rescue attempt; the final accepted sequence may be the first-round contig if rollback occurred.
+
+### UCE and phyluce outputs
+
+When `--assembly-mode uce` is used, the workflow writes:
+
+- `uce_assembly_summary.csv`: per-sample and per-locus assembly status, selected contig length, read-supported span, read count, flank balance, candidate count, and low-quality flag.
+- `uce_rescue_summary.csv`: rescue before/after comparison, density ratio, rollback status, and errors.
+- `uce_contigs/`: phyluce-compatible per-sample contig FASTA files.
+- `contigs_all_low/`: low-support extended candidates retained for inspection but not promoted to primary results.
+
+### AliFilter integration
+
+`--alignment-filter alifilter` can be used during the combine stage as an alternative to trimAl. This is useful when many UCE alignments include noisy or sparsely occupied columns. AliFilter must be available in `PATH`; it is not bundled in this repository.
 
 ## Build
 
