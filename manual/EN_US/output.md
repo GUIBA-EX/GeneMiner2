@@ -73,7 +73,7 @@
 
 **uce_assembly_summary.csv**: Generated only when the command-line workflow runs assembly with `--assembly-mode uce`. This table summarizes assembly status, selected contig length, read-supported span, read slice count, flank balance, candidate contig count, and low-quality flags for each sample and locus.
 
-**uce_rescue_summary.csv**: Generated when `--assembly-mode uce --uce-rescue-reads` is used. This table compares each locus before and after the one-round raw-read rescue, including contig length, read count, read-supported span, rescue status, and rollback errors if rescue failed.
+**uce_rescue_summary.csv**: Generated when `--assembly-mode uce --uce-rescue-reads` is used. This table compares each locus before and after the one-round raw-read rescue, including contig length, read count, read density, rescue/before density ratio, read-supported span, rescue status, and rollback errors if rescue failed or was rejected by the density-ratio threshold.
 
 **failed_samples.tsv**: Generated when any sample-level filter, re-filter, assembly, or UCE rescue task fails. The command-line workflow returns an error after writing this file so downstream combine/tree steps do not silently proceed with incomplete sample results.
 

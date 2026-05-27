@@ -234,14 +234,25 @@ def read_density_or_blank(row):
 
     return read_count / length
 
-def rescue_density_decreased(before, after):
+def density_ratio_or_blank(before, after):
     before_density = read_density_or_blank(before)
     after_density = read_density_or_blank(after)
 
     if before_density == '' or after_density == '':
+        return ''
+
+    if before_density <= 0:
+        return ''
+
+    return after_density / before_density
+
+def rescue_density_below_ratio(before, after, min_density_ratio):
+    density_ratio = density_ratio_or_blank(before, after)
+
+    if density_ratio == '':
         return False
 
-    return after_density < before_density
+    return density_ratio < min_density_ratio
 
 UCE_ASSEMBLY_SUMMARY_FIELDS = [
     'locus',
@@ -266,6 +277,9 @@ UCE_RESCUE_SUMMARY_FIELDS = [
     'before_read_count',
     'after_read_count',
     'read_count_delta',
+    'before_read_density',
+    'after_read_density',
+    'density_ratio',
     'before_read_supported_span',
     'after_read_supported_span',
     'error',
@@ -314,24 +328,31 @@ def restore_locus_file(sample_dir, backup_dir, subdir, locus):
     elif os.path.isfile(dest):
         os.remove(dest)
 
-def revert_density_drop_loci(sample_dir, backup_dir, before_rows, after_rows):
+def format_float_or_blank(value, digits=6):
+    if value == '':
+        return ''
+
+    return f'{value:.{digits}f}'.rstrip('0').rstrip('.')
+
+def revert_low_density_rescue_loci(sample_dir, backup_dir, before_rows, rescue_rows, min_density_ratio):
     reverted = set()
+    final_rows = {locus: row.copy() for locus, row in rescue_rows.items()}
 
     for locus, before in before_rows.items():
-        after = after_rows.get(locus)
+        after = rescue_rows.get(locus)
 
-        if not after or not rescue_density_decreased(before, after):
+        if not after or not rescue_density_below_ratio(before, after, min_density_ratio):
             continue
 
         for subdir in ('results', 'contigs_all', 'contigs_all_low'):
             restore_locus_file(sample_dir, backup_dir, subdir, locus)
 
-        after_rows[locus] = before.copy()
+        final_rows[locus] = before.copy()
         reverted.add(locus)
 
     if reverted:
-        write_uce_assembly_summary_rows(os.path.join(sample_dir, 'uce_assembly_summary.csv'), after_rows)
-        write_result_dict_from_uce_summary(sample_dir, after_rows)
+        write_uce_assembly_summary_rows(os.path.join(sample_dir, 'uce_assembly_summary.csv'), final_rows)
+        write_result_dict_from_uce_summary(sample_dir, final_rows)
 
     return reverted
 
@@ -352,6 +373,8 @@ def write_sample_uce_rescue_summary(sample_dir, sample, before_rows, after_rows,
             after_length = after.get('selected_contig_length', '')
             before_count = before.get('read_count', '')
             after_count = after.get('read_count', '')
+            before_density = read_density_or_blank(before)
+            after_density = read_density_or_blank(after)
 
             writer.writerow({
                 'sample': sample,
@@ -365,6 +388,9 @@ def write_sample_uce_rescue_summary(sample_dir, sample, before_rows, after_rows,
                 'before_read_count': before_count,
                 'after_read_count': after_count,
                 'read_count_delta': delta_or_blank(after_count, before_count),
+                'before_read_density': format_float_or_blank(before_density),
+                'after_read_density': format_float_or_blank(after_density),
+                'density_ratio': format_float_or_blank(density_ratio_or_blank(before, after)),
                 'before_read_supported_span': before.get('read_supported_span', ''),
                 'after_read_supported_span': after.get('read_supported_span', ''),
                 'error': error_by_locus.get(locus, error),
@@ -660,10 +686,16 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
 
             else:
                 after_rows = read_uce_summary(summary_path)
-                reverted_loci = revert_density_drop_loci(sample_dir, backup_dir, before_rows, after_rows)
+                reverted_loci = revert_low_density_rescue_loci(
+                    sample_dir,
+                    backup_dir,
+                    before_rows,
+                    after_rows,
+                    args.uce_rescue_min_density_ratio,
+                )
                 status_by_locus = {locus: 'reverted_density_drop' for locus in reverted_loci}
                 error_by_locus = {
-                    locus: 'read density decreased after rescue; first-round contig restored'
+                    locus: f'rescue read density ratio below {args.uce_rescue_min_density_ratio:g}; first-round contig restored'
                     for locus in reverted_loci
                 }
                 write_sample_uce_rescue_summary(sample_dir, name, before_rows, after_rows, 'success', status_by_locus=status_by_locus, error_by_locus=error_by_locus)
@@ -1641,6 +1673,7 @@ if __name__ == '__main__':
     group_assembly.add_argument('--uce-side-candidates', default=8, help='One-sided branch candidates to combine in UCE mode (default = 8)', metavar='INT', type=int)
     group_assembly.add_argument('--uce-rescue-reads', action='store_true', default=False, help='UCE mode only: after the first assembly, recruit raw reads once using preliminary contigs plus original references, then re-filter and re-assemble')
     group_assembly.add_argument('--uce-rescue-min-contig-length', default=60, help='Minimum preliminary contig length used as a UCE raw-read rescue reference (default = 60)', metavar='INT', type=int)
+    group_assembly.add_argument('--uce-rescue-min-density-ratio', default=0.5, help='Minimum rescue/before read-density ratio kept after UCE raw-read rescue (default = 0.5)', metavar='FLOAT', type=float)
 
     group_consensus = parser.add_argument_group('argument for consensus generation')
     group_consensus.add_argument('-c', '--consensus-threshold', default='0.75', help='Consensus threshold (default = 0.75)', metavar='FLOAT', type=float)
@@ -1674,6 +1707,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
     args.uce_side_candidates = max(args.uce_side_candidates, 3)
     args.uce_rescue_min_contig_length = max(args.uce_rescue_min_contig_length, args.kf)
+
+    if args.uce_rescue_min_density_ratio <= 0:
+        parser.error('--uce-rescue-min-density-ratio must be greater than 0')
 
     if args.no_trimal and args.alignment_filter not in (None, 'none'):
         parser.error('--no-trimal cannot be combined with --alignment-filter trimal or --alignment-filter alifilter')

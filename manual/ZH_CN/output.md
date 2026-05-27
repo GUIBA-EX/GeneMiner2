@@ -68,7 +68,7 @@
 
 **uce_assembly_summary.csv**：仅在命令行使用`--assembly-mode uce`并执行组装时生成。该表汇总每个样本和每个locus的组装状态、最佳contig长度、reads支持跨度、reads切片数、侧翼平衡度、候选contig数量和低质量标记。
 
-**uce_rescue_summary.csv**：使用`--assembly-mode uce --uce-rescue-reads`时生成。该表比较一轮raw-read rescue前后每个locus的contig长度、reads数量、reads支持跨度和rescue状态；如果rescue失败并回滚，也会记录错误信息。
+**uce_rescue_summary.csv**：使用`--assembly-mode uce --uce-rescue-reads`时生成。该表比较一轮raw-read rescue前后每个locus的contig长度、reads数量、read density、rescue/第一轮 density 比值、reads支持跨度和rescue状态；如果rescue失败或因density ratio阈值被回退，也会记录错误信息。
 
 **failed_samples.tsv**：当任一样本在filter、refilter、assemble或UCE rescue阶段失败时生成。命令行流程会在写出该文件后返回错误，避免后续combine/tree在样本结果不完整时静默继续。
 

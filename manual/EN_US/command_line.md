@@ -90,6 +90,7 @@ Command line parameters:
 - `--uce-rescue-reads`: UCE mode only. Run one additional raw-read recruitment round using preliminary contigs plus the original references, then re-filter and re-assemble.
 - UCE raw-read rescue uses controlled sample-level parallelism: up to four samples are rescued concurrently, with up to four threads per sample, and it scales down automatically when `-p` is lower.
 - `--uce-rescue-min-contig-length`: Minimum preliminary contig length used for UCE raw-read rescue.
+- `--uce-rescue-min-density-ratio`: Minimum rescue/before read-density ratio kept after UCE raw-read rescue. The default is `0.5`; loci below this ratio are restored to the first-round contig.
 - `-c`: Consensus threshold (as a decimal, between 0.0 and 1.0)
 - `-ts`: Trim source (`assembly` or `consensus`)
 - `-tm`: Trim method (`all`, `longest`, `terminal` or `isoform`)

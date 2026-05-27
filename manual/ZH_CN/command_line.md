@@ -90,6 +90,7 @@ cli/geneminer2 -f /home/user/project/samples.tsv -r /home/user/project/reference
 - `--uce-rescue-reads`: 仅用于UCE模式。初次组装后，用初步contig和原始参考序列再招募一次raw reads，然后重新进一步过滤并重新组装。
 - UCE raw-read rescue 使用受控的样本级并行：最多同时 rescue 4 个样本，每个样本最多 4 个线程；当 `-p` 较小时会自动降低并行度。
 - `--uce-rescue-min-contig-length`: 参与UCE raw-read rescue的初步contig最短长度。
+- `--uce-rescue-min-density-ratio`: UCE raw-read rescue 后保留结果所需的最低 rescue/第一轮 read-density 比值。默认值为`0.5`；低于该比值的locus会恢复为第一轮contig。
 - `-c`: 一致性阈值（介于0-1的小数形式）
 - `-ts`: 基于参考切齐的来源序列，可以是`assembly`或`consensus`
 - `-tm`: 基于参考切齐的模式，可以是`all`、`longest`、`terminal`或`isoform`

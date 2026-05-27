@@ -20,6 +20,7 @@ class CliSmokeTests(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertIn("--assembly-mode", proc.stdout)
         self.assertIn("--uce-rescue-reads", proc.stdout)
+        self.assertIn("--uce-rescue-min-density-ratio", proc.stdout)
 
 if __name__ == "__main__":
     unittest.main()
