@@ -96,7 +96,7 @@ When `--assembly-mode uce` is used, the workflow writes:
 
 ### AliFilter integration
 
-`--alignment-filter alifilter` can be used during the combine stage as an alternative to trimAl. This is useful when many UCE alignments include noisy or sparsely occupied columns. AliFilter must be available in `PATH`; it is not bundled in this repository.
+`--alignment-filter alifilter` can be used during the combine stage as an alternative to trimAl. This is useful when many UCE alignments include noisy or sparsely occupied columns. AliFilter must be available in `PATH`; it is not bundled in this repository. Omit `--alifilter-model`, or set it to `default`, to use AliFilter's built-in default model; pass a real `model.json` path only when using a custom model.
 
 ## Build
 

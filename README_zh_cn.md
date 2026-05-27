@@ -96,7 +96,7 @@ density_ratio < 0.5
 
 ### AliFilter 整合
 
-combine 阶段可以用 `--alignment-filter alifilter` 调用 AliFilter 替代 trimAl。这对包含噪声列或低占有率区域的 UCE 比对有帮助。AliFilter 需要用户自行安装，并确保 `AliFilter` 命令在 `PATH` 中；本仓库不捆绑 AliFilter。
+combine 阶段可以用 `--alignment-filter alifilter` 调用 AliFilter 替代 trimAl。这对包含噪声列或低占有率区域的 UCE 比对有帮助。AliFilter 需要用户自行安装，并确保 `AliFilter` 命令在 `PATH` 中；本仓库不捆绑 AliFilter。省略 `--alifilter-model` 或将其设为 `default` 时使用 AliFilter 内置默认模型；只有使用自定义模型时才需要传入真实的 `model.json` 路径。
 
 ## 构建
 

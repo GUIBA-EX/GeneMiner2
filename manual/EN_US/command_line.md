@@ -100,7 +100,7 @@ Command line parameters:
 - `--msa-threads`: Threads used by each multiple-sequence-alignment job (default = 1). GeneMiner2 limits concurrent alignment jobs so the total requested alignment threads do not exceed `-p`.
 - `--alignment-filter`: Alignment column filtering program before tree reconstruction (`trimal`, `alifilter` or `none`; default = `trimal`)
 - `--filter-processes`: Maximum number of concurrent trimAl or AliFilter jobs (default = `-p`)
-- `--alifilter-model`: AliFilter model specification or `model.json` path when `--alignment-filter alifilter` is used
+- `--alifilter-model`: Optional AliFilter `model.json` path when `--alignment-filter alifilter` is used. Omit this option, or set it to `default`, to use AliFilter's built-in default model.
 - `--strict-combine-errors`: Stop `combine` if any locus fails during multiple-sequence alignment, alignment cleanup, or alignment filtering. By default, failed loci are skipped with a warning.
 - `--no-trimal`: Deprecated alias for `--alignment-filter none`
 - `-cd`: Maximum difference after clean-up

@@ -1123,7 +1123,9 @@ def combine_genes(args, samples):
         msa_threads = get_msa_threads(args)
         filter_processes = get_filter_processes(args)
 
-        if args.alifilter_model and alignment_filter != 'alifilter':
+        alifilter_model = get_alifilter_model(args)
+
+        if alifilter_model and alignment_filter != 'alifilter':
             raise RuntimeError("--alifilter-model requires --alignment-filter alifilter")
 
         if args.msa_program == 'clustalo':
@@ -1276,8 +1278,8 @@ def combine_genes(args, samples):
         elif alignment_filter == 'alifilter':
             cmd = [alifilter_bin, '-i', in_path, '-o', out_path]
 
-            if args.alifilter_model:
-                cmd.extend(['-m', args.alifilter_model])
+            if alifilter_model:
+                cmd.extend(['-m', alifilter_model])
         else:
             return False
 
@@ -1356,6 +1358,19 @@ def get_alignment_filter(args):
         return 'none'
 
     return getattr(args, 'alignment_filter', None) or 'trimal'
+
+def get_alifilter_model(args):
+    model = getattr(args, 'alifilter_model', None)
+
+    if not model:
+        return None
+
+    model = model.strip()
+
+    if not model or model.lower() == 'default':
+        return None
+
+    return model
 
 def get_msa_threads(args):
     return max(1, getattr(args, 'msa_threads', 1))
@@ -1714,7 +1729,7 @@ if __name__ == '__main__':
     if args.no_trimal and args.alignment_filter not in (None, 'none'):
         parser.error('--no-trimal cannot be combined with --alignment-filter trimal or --alignment-filter alifilter')
 
-    if args.alifilter_model and get_alignment_filter(args) != 'alifilter':
+    if get_alifilter_model(args) and get_alignment_filter(args) != 'alifilter':
         parser.error('--alifilter-model requires --alignment-filter alifilter')
 
     if args.p < 1:

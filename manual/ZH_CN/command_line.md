@@ -100,7 +100,7 @@ cli/geneminer2 -f /home/user/project/samples.tsv -r /home/user/project/reference
 - `--msa-threads`: 每个多序列比对任务使用的线程数，默认为1。GeneMiner2会限制同时运行的比对任务数量，使比对阶段请求的总线程数不超过`-p`
 - `--alignment-filter`: 建树前的比对列过滤程序，支持`trimal`、`alifilter`和`none`，默认为`trimal`
 - `--filter-processes`: 同时运行的trimAl或AliFilter过滤任务数上限，默认等于`-p`
-- `--alifilter-model`: 使用`--alignment-filter alifilter`时指定AliFilter模型名称或`model.json`路径
+- `--alifilter-model`: 使用`--alignment-filter alifilter`时可选指定AliFilter的`model.json`路径；省略该参数或设为`default`时使用AliFilter内置默认模型
 - `--strict-combine-errors`: 如果任一locus在多序列比对、alignment清理或比对列过滤阶段失败，则立即停止`combine`。默认行为是输出警告并跳过失败的locus
 - `--no-trimal`: 已弃用，等同于`--alignment-filter none`
 - `-cd`: 清理序列的最大差异
