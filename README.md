@@ -23,6 +23,12 @@ This fork keeps the original GeneMiner2 reference-guided recovery model, but adj
 
 The GUI project, screenshots, bundled demo data, and large historical files have been removed from the active repository. The project is intentionally kept as a small source tree plus `Makefile` build. There is no Python `console_scripts` entry point and no `pyproject.toml`; use the generated `cli/geneminer2` executable after building.
 
+### Rust re-filter implementation
+
+The secondary read filter now has a Rust implementation under `rust/main_refilter_new/`. It is intended as a drop-in replacement for `scripts/main_refilter_new.py`: the command-line options and output layout are kept compatible, including `--keep-linked-mates` for UCE workflows.
+
+The Python implementation is still kept in `scripts/main_refilter_new.py` as a readable reference implementation and fallback. During `make`, GeneMiner2 builds the Rust binary when `cargo` is available; if Cargo is not installed, the build falls back to packaging the Python implementation with PyInstaller.
+
 ### UCE assembly mode
 
 `--assembly-mode uce` changes the assembly behavior so GeneMiner2 is less likely to trim contigs back to the short reference/probe interval. In UCE mode, the assembler prefers longer candidates that still have read support, and the default command set skips the reference-based `trim` step unless `trim` is requested explicitly.

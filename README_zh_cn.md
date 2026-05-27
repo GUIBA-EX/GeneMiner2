@@ -23,6 +23,12 @@
 
 本仓库已经移除 GUI 工程、截图、内置 demo 数据和历史大文件。当前项目定位是小型源码仓库加 `Makefile` 构建流程。仓库不再提供 Python `console_scripts` entry point，也不再保留 `pyproject.toml`；实际运行入口是构建后生成的 `cli/geneminer2`。
 
+### Rust re-filter 实现
+
+二次 reads 过滤现在增加了 Rust 实现，位于 `rust/main_refilter_new/`。它的目标是作为 `scripts/main_refilter_new.py` 的 drop-in replacement：命令行参数和输出目录结构保持兼容，包括 UCE 流程中使用的 `--keep-linked-mates`。
+
+Python 版本仍然保留在 `scripts/main_refilter_new.py`，作为可读的参考实现和 fallback。运行 `make` 时，如果环境中有 `cargo`，会优先构建 Rust binary；如果没有 Cargo，则自动回退到用 PyInstaller 打包 Python 版本。
+
 ### UCE 组装模式
 
 `--assembly-mode uce` 会让 GeneMiner2 在组装时更少受短参考或探针边界限制，优先选择更长且仍有 reads 支持的候选 contig。使用 UCE 模式且不显式指定子命令时，默认流程会跳过基于参考序列的 `trim` 步骤，避免刚组装出的侧翼序列又被裁回探针区域。如果仍然需要参考切齐，可以显式加入 `trim` 子命令。

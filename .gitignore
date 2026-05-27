@@ -25,6 +25,7 @@ ENV/
 cli/
 build/
 dist/
+target/
 *.spec
 
 # Logs and temporary files
