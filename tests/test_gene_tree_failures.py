@@ -1,12 +1,13 @@
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from unix_command import run_gene_tree_job
+from unix_command import run_gene_tree_job, write_failed_gene_trees
 
 
 class GeneTreeFailureTests(unittest.TestCase):
@@ -28,6 +29,15 @@ class GeneTreeFailureTests(unittest.TestCase):
         self.assertEqual(alignment, "/tmp/aligned/uce-2.fasta")
         self.assertEqual(tree_path, "/tmp/tree")
         self.assertEqual(error, "")
+
+    def test_failed_gene_tree_report_is_removed_when_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = Path(tmp) / "failed_gene_trees.tsv"
+            report.write_text("old\n")
+
+            write_failed_gene_trees(tmp, [])
+
+            self.assertFalse(report.exists())
 
 
 if __name__ == "__main__":

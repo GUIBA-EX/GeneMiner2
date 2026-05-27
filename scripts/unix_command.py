@@ -454,7 +454,7 @@ def get_uce_rescue_parallelism(total_threads, sample_count):
     rescue_workers = max(1, min(4, sample_count, total_threads // rescue_threads))
     return rescue_workers, rescue_threads
 
-def build_uce_rescue_filter_commands(filter_bin, rescue_ref_dir, sample_dir, q1, q2, args, rescue_kmer_dict_path, threads):
+def build_uce_rescue_filter_commands(filter_bin, rescue_ref_dir, sample_dir, q1, q2, args, rescue_kmer_dict_path):
     dict_cmd = [filter_bin, '-r', rescue_ref_dir, '-o', sample_dir, '-kf', str(args.kf),
                 '-s', str(args.step_size), '-gr', '-lkd', rescue_kmer_dict_path, '-m', '2']
     reads_cmd = [filter_bin, '-r', rescue_ref_dir, '-q1', q1, '-q2', q2, '-o', sample_dir,
@@ -670,7 +670,6 @@ def do_filter_assemble(args, samples, do_filter, do_refilter, do_assemble, ignor
                     q2,
                     args,
                     rescue_kmer_dict_path,
-                    thr,
                 )
 
                 subprocess.run(dict_cmd, check=True)
@@ -1600,7 +1599,12 @@ def build_coalescent_tree(args):
                 continue
 
             with open(path, 'r') as r:
-                f.write(next(r))
+                tree = next((line.strip() for line in r if line.strip()), '')
+
+            if not tree:
+                continue
+
+            f.write(tree + '\n')
 
             written = True
 

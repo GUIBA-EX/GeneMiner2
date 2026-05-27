@@ -33,7 +33,6 @@ class UceRescueParallelismTests(unittest.TestCase):
             "/tmp/R2.fq.gz",
             args,
             "/tmp/sample/uce_rescue_kmer_dict_k21.dict",
-            4,
         )
 
         self.assertEqual(dict_cmd[dict_cmd.index("-m") + 1], "2")
@@ -49,7 +48,6 @@ class UceRescueParallelismTests(unittest.TestCase):
             "/tmp/R2.fq.gz",
             args,
             "/tmp/sample/uce_rescue_kmer_dict_k21.dict",
-            2,
         )
 
         self.assertEqual(reads_cmd[reads_cmd.index("-m_reads") + 1], "1000")
