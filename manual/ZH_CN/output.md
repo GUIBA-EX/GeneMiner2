@@ -1,99 +1,77 @@
+# 输出文件
 
-# 输出结果注解
+本文档说明当前命令行版本会生成的输出文件。旧 GUI、细胞器组装和 Windows 辅助脚本相关输出已经不属于本 CLI fork 的支持范围。
 
-## 输出文件
-**aligned**:[结果加入参考-比对]的结果文件。
+## 单样本目录
 
-**trimed**：[结果加入参考-切齐]的结果文件
+输入样本表中的每个样本都会在输出目录下生成一个同名文件夹。
 
-**contigs_all**: 所有可能的组装结果。
+**filtered_pe**：第一轮参考 k-mer 过滤后分配到各 locus 的临时 paired-end reads。如果同一次运行继续完成 re-filter，该目录通常会在 re-filter 成功后被删除。
 
-**filtered**: 过滤后得到的fq文件。
+**filtered**：进一步过滤后保留的 reads。UCE 模式下，只要 paired-end 的任一端通过 locus 过滤，整对 reads 都会被保留。
 
-**iteration**: 首次或多次迭代得到的文件，内部文件名和文件含义与上级文件夹相同。
+**large_files**：进一步过滤时超过深度限制或文件大小限制的 reads。只有产生这类文件时才会出现。
 
-**large_files**: 进一步过滤时超过深度限制或者文件大小限制的原始fq文件。如果所有过滤结果都在限制以内，则不会出现该文件夹。
+**results**：主组装结果。每个 locus 的最佳 contig 写为 `<locus>.fasta`。
 
-**log.txt**: 日志文件。
+**contigs_all**：组装器评估过的候选 contigs。
 
-**consensus**：将结果序列和过滤后的fq文件进行映射。存在设定值以上的模糊碱基数的序列将会被保留。
+**contigs_all_low**：UCE 模式下保留的低支持延伸候选 contigs，仅用于检查，不会提升到主 `results` 目录。
 
-**supercontigs**：一致性重构的结果文件，使用IPUAC代码生成的退化序列，使用简并碱基标注了SNP位点。
+**consensus**：可选 `consensus` 命令生成的一致性序列。
 
-**multicopy**：旁系同源基因筛选的结果文件，其中_ref.fasta文件储存旁系同源基因，csv文件记录不同位置碱基map出现的次数，.pec.csv文件记录碱基变异的频率。
+**blast**：可选 `trim` 命令生成的参考切齐结果。
 
-**results：拼接结果中权重最大的序列，即最终结果。**
+**log.txt**：单样本日志文件。
 
-    - kmer_dict_k31.dict: kmer字典文件，格式为：kmer片段(十六进制)，kmer计数（十六进制）。
+**result_dict.txt**：每个 locus 的组装状态和 reads 支持摘要。
 
-    - result_dict.txt: 结果文件，格式为：基因名，序列拼接状态，用于组装的序列数量。
+**ref_reads_count_dict.txt**：第一轮过滤阶段每个 locus 分配到的 reads 数量。
 
-    - ref_reads_count_dict.txt: 每个参考基因序列拆分成kmer的总条数。
+**uce_assembly_summary.csv**：UCE 模式下的单样本逐 locus 组装摘要，包含状态、最佳 contig 长度、reads 支持跨度、read count、侧翼平衡度、候选数和低质量标记。
 
-    - best_refs: '获得最佳参考序列'的结果文件。即匹配reads kmer最多的参考序列。
+**uce_rescue_summary.csv**：使用 `--assembly-mode uce --uce-rescue-reads` 时生成的单样本 raw-read rescue 摘要。
 
----
-**Organelle**：细胞器基因组的拼接结果。
+## 合并输出
 
-    - Gennome_cp.fasta：植物叶绿体基因组拼接结果。
+**combined_results**：按 locus 合并不同样本恢复序列后的文件。
 
-    - Gennome_cp.gb：注释后的植物叶绿体基因组拼接结果。
+**combined_results/aligned**：`combine` 阶段生成的多序列比对结果。
 
-    - Gennome_mito_plant.fasta：植物线粒体基因组拼接结果。
+**combined_trimed**：比对列过滤后的逐 locus alignment。默认由 trimAl 生成；使用 `--alignment-filter alifilter` 时由 AliFilter 生成；使用 `--alignment-filter none` 或 `--no-trimal` 时不会生成。
 
-    - temp：因终端关闭终止分析，未完成的细胞器基因组的拼接过程文件。
+**combined_results.fasta**：比对列过滤前的串联 alignment。
 
-    - Gennome_mito.fasta：动物线粒体基因组拼接结果。
+**combined_trimed.fasta**：比对列过滤后的串联 alignment。
 
----
+**failed_gene_trees.tsv**：溯祖树流程中单基因树构建失败的 locus 列表。
 
-#### 批量分析结果：
+**failed_samples.tsv**：当任一样本在 filter、refilter、assemble 或 UCE rescue 阶段失败时生成。命令行流程会在写出该文件后停止，避免下游步骤在样本结果不完整时继续运行。
 
-**您的测序文件名**：以测序序列名命名的文件夹，储存每个测序序列分别得到的拼接结果。
-    子文件夹**blast**：储存基于参考切齐后的结果序列。
+**Coalescent.tree**：溯祖流程生成的物种树。
 
-**combined_results**：储存合并后的结果文件。
+**Concatenation.tree**：串联流程生成的系统树。
 
-**combined_trimed**：储存按locus过滤后的多序列比对结果。默认由trimAl生成；如果使用`--alignment-filter alifilter`，则由AliFilter生成。使用`--alignment-filter none`或`--no-trimal`时不会生成该文件夹。
+## UCE 专用输出
 
-**combined_results.fasta**: 串联结果文件。
+**uce_contigs**：UCE 组装模式生成的 phyluce 兼容 contig 输出。每个样本一个 `*.contigs.fasta` 文件。`sample_name_map.tsv` 记录 GeneMiner2 样本名与 phyluce 安全样本名的对应关系。
 
-**combined_trimed.fasta**： 经过比对列过滤后的串联结果文件。默认由trimAl过滤结果合并生成；如果使用`--alignment-filter alifilter`，则由AliFilter过滤结果合并生成。
+**uce_rescue_summary.csv**：跨样本合并后的 rescue 摘要。使用 `--assembly-mode uce --uce-rescue-reads` 时生成。
 
-**aligned**: 多序列比对的结果。
+## 统计输出
 
-**uce_contigs**：仅在命令行使用`--assembly-mode uce`并执行组装时生成。该文件夹包含按样本合并的`*.contigs.fasta`文件，文件名和序列名采用phyluce兼容格式，可用于后续`phyluce_assembly_match_contigs_to_probes`等流程。`sample_name_map.tsv`记录GeneMiner2样本名与phyluce安全样本名的对应关系。
+`stats` 子命令会从已有输出目录生成类似 HybPiper 的 UCE 恢复统计。
 
-**contigs_all_low**：组装阶段在每个样本目录下生成。UCE模式会在这里保留带`low_support_contig`标题的低支持延伸候选，便于检查可能有用的侧翼序列，但不会直接提升为主结果。
+**uce_stats.tsv**：样本级统计表，汇总过滤 reads、成功 loci、低质量 loci、主要失败类型、按参考长度比例统计的恢复数量、rescue 回退数量、总恢复碱基数、contig 长度、reads 支持跨度和 read density。
 
-**uce_assembly_summary.csv**：仅在命令行使用`--assembly-mode uce`并执行组装时生成。该表汇总每个样本和每个locus的组装状态、最佳contig长度、reads支持跨度、reads切片数、侧翼平衡度、候选contig数量和低质量标记。
+**uce_locus_stats.tsv**：locus 级统计表，汇总参考长度、样本占有率、恢复长度、reads 支持、侧翼平衡度和候选 contig 数量。
 
-**uce_rescue_summary.csv**：使用`--assembly-mode uce --uce-rescue-reads`时生成。该表比较一轮raw-read rescue前后每个locus的contig长度、reads数量、read density、rescue/第一轮 density 比值、reads支持跨度和rescue状态；如果rescue失败或因density ratio阈值被回退，也会记录错误信息。
+**uce_seq_lengths.tsv**：sample-by-locus contig 长度矩阵，包含根据参考目录计算的 `MeanLength` 行。
 
-**uce_stats.tsv**：由`stats`子命令生成。该样本级统计表汇总过滤reads数量、成功loci数量、低质量loci数量、主要失败类型、按参考长度比例统计的恢复数量、rescue回退数量、总恢复碱基数、contig长度、reads支持跨度和read density。
+**uce_read_counts.tsv**：sample-by-locus 矩阵，记录最佳 contig 的 read count。
 
-**uce_locus_stats.tsv**：由`stats`子命令生成。该locus级统计表汇总参考长度、样本占有率、平均和中位恢复长度、reads支持、侧翼平衡度和候选contig数量。
+**uce_filtered_read_counts.tsv**：sample-by-locus 矩阵，根据 `ref_reads_count_dict.txt` 记录第一轮过滤阶段分配到各 locus 的 reads 数量。
 
-**uce_seq_lengths.tsv**：由`stats`子命令生成。该表是类似HybPiper的sample-by-locus长度矩阵，包含根据参考目录计算的`MeanLength`行。
+**uce_rescue_stats.tsv**：由已有 `uce_rescue_summary.csv` 转换得到的 rescue 明细表。
 
-**uce_read_counts.tsv**：由`stats`子命令生成。该sample-by-locus矩阵记录最佳contig的read count。
-
-**uce_filtered_read_counts.tsv**：由`stats`子命令生成。该sample-by-locus矩阵根据`ref_reads_count_dict.txt`记录第一轮过滤阶段分配到各locus的reads数量。
-
-**uce_recovery_heatmap.png**和**uce_read_counts_heatmap.png**：由`stats`子命令生成；如果环境中没有`pandas`、`seaborn`或`matplotlib`，或使用了`--stats-no-heatmap`，则不会生成。
-
-**failed_samples.tsv**：当任一样本在filter、refilter、assemble或UCE rescue阶段失败时生成。命令行流程会在写出该文件后返回错误，避免后续combine/tree在样本结果不完整时静默继续。
-
-**summary.csv**: 统计汇总结果，内包含：
-
-    Reference Median Length：参考序列的长度中值，用于在[基于参考切齐]步骤对序列进行筛选。
-    
-    Reads Counts: 过滤匹配的序列数量。
-
-    Result Availability：是否存在组装结果，1为是。
-
-    Multicopy Presence：是否存在多拷贝序列。1为是。
-
-
-
- ---
+**uce_recovery_heatmap.png** 和 **uce_read_counts_heatmap.png**：`stats` 子命令生成的热图；如果环境中没有 `pandas`、`seaborn` 或 `matplotlib`，或使用了 `--stats-no-heatmap`，则不会生成。
