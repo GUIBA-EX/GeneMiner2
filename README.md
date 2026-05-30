@@ -34,7 +34,7 @@ The Python implementation is still kept in `scripts/main_refilter_new.py` as a r
 
 ### UCE assembly mode
 
-`--assembly-mode uce` changes the assembly behavior so GeneMiner2 is less likely to trim contigs back to the short reference/probe interval. In UCE mode, the assembler prefers longer candidates that still have read support, penalizes weakly supported over-extension using read-density and k-mer-depth continuity, and the default command set skips the reference-based `trim` step unless `trim` is requested explicitly.
+`--assembly-mode uce` changes the assembly behavior so GeneMiner2 is less likely to trim contigs back to the short reference/probe interval. In UCE mode, the assembler prefers longer candidates that still have read support, penalizes weakly supported over-extension using read-density, k-mer-depth continuity and read-threading continuity, and the default command set skips the reference-based `trim` step unless `trim` is requested explicitly.
 
 Recommended UCE-oriented assembly options are:
 
@@ -71,10 +71,25 @@ Two optional advanced guardrails are available but disabled by default:
 
 ```bash
 --uce-max-depth-cv 0 \
---uce-max-depth-ratio 0
+--uce-max-depth-ratio 0 \
+--uce-max-unsupported-fraction 0
 ```
 
-Set these to positive values only when you want to reject candidates with highly uneven k-mer depth or strong repeat-like depth spikes.
+Set these to positive values only when you want to reject candidates with highly uneven k-mer depth, strong repeat-like depth spikes, or long internal intervals that are not covered by retained read slices.
+
+UCE search depth is dynamically reduced for weak loci by default. The user-specified `-i/--search-depth` remains the upper bound, while loci with very few retained reads or genomic k-mers use a smaller budget. Use `--no-uce-dynamic-search` to disable this behavior, or adjust the floor with:
+
+```bash
+--uce-min-search-depth 512
+```
+
+For locus-specific tuning, provide a CSV or TSV manifest:
+
+```bash
+--uce-reference-manifest uce_manifest.tsv
+```
+
+The manifest must include a `locus` column. Optional override columns include `max_contig_length`, `min_read_density`, `density_check_min_length`, `max_depth_cv`, `max_depth_ratio`, `max_unsupported_fraction`, and `min_search_depth`. These names may also be prefixed with `uce_`. Blank cells fall back to the global CLI values.
 
 ### Paired-end mate retention
 
@@ -119,7 +134,7 @@ The rescue summary records `before_read_density`, `after_read_density`, and `den
 
 When `--assembly-mode uce` is used, the workflow writes:
 
-- `uce_assembly_summary.csv`: per-sample and per-locus assembly status, selected contig length, read-supported span, read count, read density, support fraction, flank balance, k-mer depth metrics, candidate count, and low-quality flag.
+- `uce_assembly_summary.csv`: per-sample and per-locus assembly status, selected contig length, read-supported span, read count, read density, support fraction, flank balance, k-mer depth metrics, read-threading metrics, dynamic search depth, manifest overrides, candidate count, and low-quality flag.
 - `uce_rescue_summary.csv`: rescue before/after comparison, density ratio, rollback status, and errors.
 - `uce_contigs/`: phyluce-compatible per-sample contig FASTA files.
 - `contigs_all_low/`: low-support extended candidates retained for inspection but not promoted to primary results.

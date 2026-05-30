@@ -26,6 +26,10 @@ class UceRescueAssemblerReferenceTests(unittest.TestCase):
             uce_density_check_min_length=1000,
             uce_max_depth_cv=0,
             uce_max_depth_ratio=0,
+            uce_max_unsupported_fraction=0,
+            uce_dynamic_search=True,
+            uce_min_search_depth=512,
+            uce_reference_manifest=None,
             assembler_reference_cache_dir=None,
         )
 
@@ -58,6 +62,10 @@ class UceRescueAssemblerReferenceTests(unittest.TestCase):
             uce_density_check_min_length=1000,
             uce_max_depth_cv=0,
             uce_max_depth_ratio=0,
+            uce_max_unsupported_fraction=0,
+            uce_dynamic_search=True,
+            uce_min_search_depth=512,
+            uce_reference_manifest="/tmp/manifest.tsv",
             assembler_reference_cache_dir="/tmp/cache/assembler",
             r="/tmp/ref",
         )
@@ -75,6 +83,10 @@ class UceRescueAssemblerReferenceTests(unittest.TestCase):
             cmd[cmd.index("--assembler-reference-cache-dir") + 1],
             "/tmp/cache/assembler",
         )
+        self.assertEqual(
+            cmd[cmd.index("--uce-reference-manifest") + 1],
+            "/tmp/manifest.tsv",
+        )
 
     def test_assembler_command_does_not_cache_dynamic_rescue_refs(self):
         args = SimpleNamespace(
@@ -91,6 +103,10 @@ class UceRescueAssemblerReferenceTests(unittest.TestCase):
             uce_density_check_min_length=1000,
             uce_max_depth_cv=0,
             uce_max_depth_ratio=0,
+            uce_max_unsupported_fraction=0,
+            uce_dynamic_search=True,
+            uce_min_search_depth=512,
+            uce_reference_manifest=None,
             assembler_reference_cache_dir="/tmp/cache/assembler",
             r="/tmp/ref",
         )

@@ -94,6 +94,10 @@ cli/geneminer2 -f /home/user/project/samples.tsv -r /home/user/project/reference
 - `--uce-density-check-min-length`: 启用UCE read-density保护阈值的最短contig长度。默认值为`1000`。
 - `--uce-max-depth-cv`: 可选的UCE候选contig k-mer深度变异系数上限。默认值为`0`，表示关闭该保护阈值。
 - `--uce-max-depth-ratio`: 可选的UCE候选contig最大/中位k-mer深度比值上限。默认值为`0`，表示关闭该保护阈值。
+- `--uce-max-unsupported-fraction`: 可选的UCE候选contig中未被保留read切片覆盖的最大比例。默认值为`0`，表示关闭该保护阈值。
+- `--no-uce-dynamic-search`: 关闭UCE动态搜索深度预算。默认情况下，弱支持locus会使用较小搜索预算，而`-i/--search-depth`仍作为上限。
+- `--uce-min-search-depth`: UCE动态搜索使用的最低搜索深度。默认值为`512`。
+- `--uce-reference-manifest`: 可选CSV/TSV文件，用于逐locus覆盖UCE组装参数。必须包含`locus`列，可覆盖`max_contig_length`、`min_read_density`、`density_check_min_length`、`max_depth_cv`、`max_depth_ratio`、`max_unsupported_fraction`和`min_search_depth`。
 - `--uce-rescue-reads`: 仅用于UCE模式。初次组装后，用初步contig和原始参考序列再招募一次raw reads，然后重新进一步过滤并重新组装。
 - UCE raw-read rescue 使用受控的样本级并行：最多同时 rescue 4 个样本，每个样本最多 4 个线程；当 `-p` 较小时会自动降低并行度。
 - `--uce-rescue-min-contig-length`: 参与UCE raw-read rescue的初步contig最短长度。

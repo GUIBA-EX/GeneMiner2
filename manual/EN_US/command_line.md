@@ -94,6 +94,10 @@ Command line parameters:
 - `--uce-density-check-min-length`: Minimum contig length where the UCE read-density guardrail applies. The default is `1000`.
 - `--uce-max-depth-cv`: Optional maximum k-mer depth coefficient of variation for UCE contigs. The default is `0`, which disables this guardrail.
 - `--uce-max-depth-ratio`: Optional maximum max/median k-mer depth ratio for UCE contigs. The default is `0`, which disables this guardrail.
+- `--uce-max-unsupported-fraction`: Optional maximum fraction of a UCE contig not covered by retained read slices. The default is `0`, which disables this guardrail.
+- `--no-uce-dynamic-search`: Disable UCE dynamic search-depth budgeting. By default, weak loci use a smaller search budget while `-i/--search-depth` remains the upper bound.
+- `--uce-min-search-depth`: Minimum search depth used by UCE dynamic search. The default is `512`.
+- `--uce-reference-manifest`: Optional CSV/TSV file with per-locus UCE overrides. It must contain a `locus` column and can override `max_contig_length`, `min_read_density`, `density_check_min_length`, `max_depth_cv`, `max_depth_ratio`, `max_unsupported_fraction`, and `min_search_depth`.
 - `--uce-rescue-reads`: UCE mode only. Run one additional raw-read recruitment round using preliminary contigs plus the original references, then re-filter and re-assemble.
 - UCE raw-read rescue uses controlled sample-level parallelism: up to four samples are rescued concurrently, with up to four threads per sample, and it scales down automatically when `-p` is lower.
 - `--uce-rescue-min-contig-length`: Minimum preliminary contig length used for UCE raw-read rescue.

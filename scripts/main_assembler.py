@@ -35,6 +35,9 @@ RAW_SUPPORT_FRACTION = 6
 RAW_KMER_MEDIAN_DEPTH = 7
 RAW_KMER_DEPTH_CV = 8
 RAW_KMER_MAX_DEPTH_RATIO = 9
+RAW_THREAD_COVERAGE_FRACTION = 10
+RAW_MAX_UNSUPPORTED_SPAN = 11
+RAW_THREAD_MEDIAN_DEPTH = 12
 
 CONTIG_SEQ = 0
 CONTIG_SEED_COUNT = 1
@@ -48,6 +51,9 @@ CONTIG_SUPPORT_FRACTION = 8
 CONTIG_KMER_MEDIAN_DEPTH = 9
 CONTIG_KMER_DEPTH_CV = 10
 CONTIG_KMER_MAX_DEPTH_RATIO = 11
+CONTIG_THREAD_COVERAGE_FRACTION = 12
+CONTIG_MAX_UNSUPPORTED_SPAN = 13
+CONTIG_THREAD_MEDIAN_DEPTH = 14
 
 def Write_Print(log_path, *log_str, sep = " "):
     """
@@ -176,6 +182,70 @@ def Load_Or_Make_Kmer_Dict(_kmer_dict, file_path, kmer_size, cache_dir=None):
         pickle.dump(_kmer_dict, handle, protocol=pickle.HIGHEST_PROTOCOL)
     os.replace(temp_path, cache_path)
     return False
+
+def Parse_Manifest_Float(value):
+    if value is None:
+        return None
+
+    value = str(value).strip()
+    if not value:
+        return None
+
+    return float(value)
+
+def Parse_Manifest_Int(value):
+    parsed = Parse_Manifest_Float(value)
+    if parsed is None:
+        return None
+
+    return int(parsed)
+
+def Load_Uce_Reference_Manifest(path):
+    if not path:
+        return {}
+
+    manifest = {}
+    delimiter = '\t' if path.lower().endswith(('.tsv', '.txt')) else ','
+
+    with open(path, newline='') as f:
+        reader = csv.DictReader(f, delimiter=delimiter)
+        if not reader.fieldnames or 'locus' not in reader.fieldnames:
+            raise ValueError("UCE reference manifest must contain a 'locus' column")
+
+        for row in reader:
+            locus = (row.get('locus') or '').strip()
+            if not locus:
+                continue
+
+            overrides = {}
+            for source, target, parser, minimum in (
+                ('max_contig_length', 'max_contig_length', Parse_Manifest_Int, 0),
+                ('uce_max_contig_length', 'max_contig_length', Parse_Manifest_Int, 0),
+                ('min_read_density', 'min_read_density', Parse_Manifest_Float, 0),
+                ('uce_min_read_density', 'min_read_density', Parse_Manifest_Float, 0),
+                ('density_check_min_length', 'density_check_min_length', Parse_Manifest_Int, 1),
+                ('uce_density_check_min_length', 'density_check_min_length', Parse_Manifest_Int, 1),
+                ('max_depth_cv', 'max_depth_cv', Parse_Manifest_Float, 0),
+                ('uce_max_depth_cv', 'max_depth_cv', Parse_Manifest_Float, 0),
+                ('max_depth_ratio', 'max_depth_ratio', Parse_Manifest_Float, 0),
+                ('uce_max_depth_ratio', 'max_depth_ratio', Parse_Manifest_Float, 0),
+                ('max_unsupported_fraction', 'max_unsupported_fraction', Parse_Manifest_Float, 0),
+                ('uce_max_unsupported_fraction', 'max_unsupported_fraction', Parse_Manifest_Float, 0),
+                ('min_search_depth', 'min_search_depth', Parse_Manifest_Int, 1),
+                ('uce_min_search_depth', 'min_search_depth', Parse_Manifest_Int, 1),
+            ):
+                if source not in row:
+                    continue
+
+                parsed = parser(row.get(source))
+                if parsed is not None:
+                    if parsed < minimum:
+                        raise ValueError(f"Invalid {source} for {locus}: {parsed} is lower than {minimum}")
+                    overrides[target] = parsed
+
+            manifest[locus] = overrides
+
+    return manifest
 
 def Get_Ref_Info(ref_path, _ref_path_dict, _ref_count_dict):
     """
@@ -450,6 +520,51 @@ def Calculate_Read_Support(seq, slice_len, reads_dict):
     return read_count, supported_span, flank_balance, left_coord, right_coord
 
 
+def Calculate_Read_Threading(seq, slice_len, reads_dict):
+    """
+    Map retained read slices back onto the candidate contig and summarize
+    contiguous read support. This is a lightweight post-hoc analogue of read
+    threading: it does not alter the graph, but penalizes candidates with long
+    unsupported internal gaps.
+    """
+    contig_len = len(seq)
+    if contig_len == 0:
+        return 0, 0, 0
+
+    if slice_len <= 0 or contig_len < slice_len:
+        return 0, contig_len, 0
+
+    diff = [0] * (contig_len + 1)
+
+    for start in range(contig_len - slice_len + 1):
+        slice_str = seq[start:start + slice_len]
+        count = reads_dict.get(slice_str, 0)
+        if count:
+            diff[start] += count
+            diff[start + slice_len] -= count
+
+    covered = 0
+    max_unsupported = 0
+    unsupported_run = 0
+    depth = 0
+    supported_depths = []
+
+    for i in range(contig_len):
+        depth += diff[i]
+        if depth > 0:
+            covered += 1
+            unsupported_run = 0
+            supported_depths.append(depth)
+        else:
+            unsupported_run += 1
+            if unsupported_run > max_unsupported:
+                max_unsupported = unsupported_run
+
+    coverage_fraction = covered / contig_len
+    median_depth = Median_Value(supported_depths)
+    return coverage_fraction, max_unsupported, median_depth
+
+
 def Calculate_Kmer_Depth_Stats(seq, kmer_size, assemble_dict):
     seq_str = seq.translate(FWD_TRANS)
 
@@ -498,26 +613,43 @@ def Score_Contig(contig, assembly_mode):
         support_fraction = contig[CONTIG_SUPPORT_FRACTION]
         depth_cv = contig[CONTIG_KMER_DEPTH_CV]
         max_depth_ratio = contig[CONTIG_KMER_MAX_DEPTH_RATIO]
+        thread_coverage_fraction = contig[CONTIG_THREAD_COVERAGE_FRACTION]
+        max_unsupported_span = contig[CONTIG_MAX_UNSUPPORTED_SPAN]
         density_factor = min(read_density / 0.01, 1.0)
         continuity_factor = 1 / (1 + depth_cv)
         repeat_factor = min(10 / max(max_depth_ratio, 1), 1.0)
-        adjusted_span = supported_span * density_factor * continuity_factor * repeat_factor
-        return (adjusted_span, support_fraction, read_density, seq_len, read_count, flank_balance, weight)
+        thread_coverage_factor = 0.5 + 0.5 * thread_coverage_fraction
+        unsupported_fraction = max_unsupported_span / seq_len if seq_len else 1
+        gap_factor = max(0.1, 1 - unsupported_fraction)
+        adjusted_span = supported_span * density_factor * continuity_factor * repeat_factor * thread_coverage_factor * gap_factor
+        return (adjusted_span, support_fraction, thread_coverage_fraction, read_density, seq_len, read_count, flank_balance, weight)
 
     return (read_count, weight)
 
 
-def Build_Uce_Guardrails(args):
-    return {
+def Get_Uce_Manifest_Overrides(args, locus):
+    manifest = getattr(args, 'uce_manifest', None) or {}
+    return manifest.get(locus, {})
+
+
+def Build_Uce_Guardrails(args, locus=None):
+    guardrails = {
         'max_contig_length': args.uce_max_contig_length,
         'min_read_density': args.uce_min_read_density,
         'density_check_min_length': args.uce_density_check_min_length,
         'max_depth_cv': args.uce_max_depth_cv,
         'max_depth_ratio': args.uce_max_depth_ratio,
+        'max_unsupported_fraction': args.uce_max_unsupported_fraction,
     }
 
+    for key, value in Get_Uce_Manifest_Overrides(args, locus).items():
+        if key in guardrails:
+            guardrails[key] = value
 
-def Pass_Uce_Guardrails(contig_len, read_density, depth_cv, max_depth_ratio, guardrails):
+    return guardrails
+
+
+def Pass_Uce_Guardrails(contig_len, read_density, depth_cv, max_depth_ratio, max_unsupported_span, guardrails):
     if not guardrails:
         return True
 
@@ -533,7 +665,35 @@ def Pass_Uce_Guardrails(contig_len, read_density, depth_cv, max_depth_ratio, gua
     if guardrails['max_depth_ratio'] > 0 and max_depth_ratio > guardrails['max_depth_ratio']:
         return False
 
+    max_unsupported_fraction = guardrails.get('max_unsupported_fraction', 0)
+    if max_unsupported_fraction > 0 and contig_len > 0:
+        if max_unsupported_span / contig_len > max_unsupported_fraction:
+            return False
+
     return True
+
+
+def Compute_Uce_Iteration(base_iteration, args, read_slice_count, filtered_kmer_count, locus=None):
+    if args.assembly_mode != 'uce' or not args.uce_dynamic_search:
+        return base_iteration
+
+    if read_slice_count < 5 or filtered_kmer_count < 50:
+        fraction = 0.25
+    elif read_slice_count < 20 or filtered_kmer_count < 200:
+        fraction = 0.5
+    elif read_slice_count < 50 or filtered_kmer_count < 500:
+        fraction = 0.75
+    else:
+        fraction = 1.0
+
+    min_search_depth = args.uce_min_search_depth
+    overrides = Get_Uce_Manifest_Overrides(args, locus)
+    if 'min_search_depth' in overrides:
+        min_search_depth = max(1, int(overrides['min_search_depth']))
+
+    dynamic_iteration = int(base_iteration * fraction)
+    min_search_depth = min(base_iteration, max(1, min_search_depth))
+    return max(min_search_depth, dynamic_iteration)
 
 
 def Build_Contig_Record(raw_contig, seed_count, contig_pos):
@@ -550,6 +710,9 @@ def Build_Contig_Record(raw_contig, seed_count, contig_pos):
         raw_contig[RAW_KMER_MEDIAN_DEPTH],
         raw_contig[RAW_KMER_DEPTH_CV],
         raw_contig[RAW_KMER_MAX_DEPTH_RATIO],
+        raw_contig[RAW_THREAD_COVERAGE_FRACTION],
+        raw_contig[RAW_MAX_UNSUPPORTED_SPAN],
+        raw_contig[RAW_THREAD_MEDIAN_DEPTH],
     ]
 
 
@@ -587,8 +750,10 @@ def Get_Contig_v6(_reads_dict, slice_len, _dict, seed, kmer_size, cov_min, itera
             read_density = r_count / contig_len if contig_len else 0
             support_fraction = cov_len / contig_len if contig_len else 0
             median_depth, depth_cv, max_depth_ratio = (0, 0, 0)
+            thread_coverage_fraction, max_unsupported_span, thread_median_depth = (0, contig_len, 0)
             if assembly_mode == 'uce':
                 median_depth, depth_cv, max_depth_ratio = Calculate_Kmer_Depth_Stats(c, kmer_size, _dict)
+                thread_coverage_fraction, max_unsupported_span, thread_median_depth = Calculate_Read_Threading(c, slice_len, _reads_dict)
             cov_dep = r_count * slice_len / 0.9
             if cov_min > 0:
                 if cov_len == 0 or cov_dep / cov_len < cov_min:
@@ -601,11 +766,12 @@ def Get_Contig_v6(_reads_dict, slice_len, _dict, seed, kmer_size, cov_min, itera
                     support_fraction = cov_len / contig_len if contig_len else 0
                     if assembly_mode == 'uce':
                         median_depth, depth_cv, max_depth_ratio = Calculate_Kmer_Depth_Stats(c, kmer_size, _dict)
+                        thread_coverage_fraction, max_unsupported_span, thread_median_depth = Calculate_Read_Threading(c, slice_len, _reads_dict)
             if assembly_mode == 'uce':
-                if not Pass_Uce_Guardrails(contig_len, read_density, depth_cv, max_depth_ratio, uce_guardrails):
+                if not Pass_Uce_Guardrails(contig_len, read_density, depth_cv, max_depth_ratio, max_unsupported_span, uce_guardrails):
                     continue
             # 序列，序列的拼接权重，切片数
-            processed_contigs.append([c, c_weight, r_count, cov_len, flank_balance, read_density, support_fraction, median_depth, depth_cv, max_depth_ratio])
+            processed_contigs.append([c, c_weight, r_count, cov_len, flank_balance, read_density, support_fraction, median_depth, depth_cv, max_depth_ratio, thread_coverage_fraction, max_unsupported_span, thread_median_depth])
     return processed_contigs, kmer_set_1 | kmer_set_2, contig_pos
 
 def Calculate_Kmer_Size(ref_path, reads, slice_len, k_min, k_max, error_limit):
@@ -721,6 +887,11 @@ def Write_Uce_Summary(rows, file_name):
         'kmer_median_depth',
         'kmer_depth_cv',
         'kmer_max_depth_ratio',
+        'thread_coverage_fraction',
+        'max_unsupported_span',
+        'thread_median_depth',
+        'dynamic_iteration',
+        'manifest_overrides',
         'candidate_count',
         'low_quality',
     ]
@@ -830,13 +1001,16 @@ def process_key_value(args, key, ref_path, ref_count, iteration, soft_boundary, 
     contigs_all = []
     contigs_all_low = []
     contigs_best = []
-    uce_guardrails = Build_Uce_Guardrails(args) if args.assembly_mode == 'uce' else None
+    read_slice_count = sum(reads_dict.values())
+    dynamic_iteration = Compute_Uce_Iteration(iteration, args, read_slice_count, len(filtered_dict), key)
+    uce_guardrails = Build_Uce_Guardrails(args, key) if args.assembly_mode == 'uce' else None
+    manifest_overrides = sorted(Get_Uce_Manifest_Overrides(args, key).keys()) if args.assembly_mode == 'uce' else []
 
     while len(seed_list) > seed_list_len * 0.5: # 已经耗费了大于一半的seed就没必要再做了 
         # org_contigs: 0序列 1序列的拼接权重 2切片数
         org_contigs, kmer_set, contig_pos = Get_Contig_v6(
             reads_dict, slice_len, filtered_dict, seed_list[0][0], current_ka, args.cov_min,
-            iteration=iteration, soft_boundary=soft_boundary, assembly_mode=args.assembly_mode,
+            iteration=dynamic_iteration, soft_boundary=soft_boundary, assembly_mode=args.assembly_mode,
             uce_side_candidates=args.uce_side_candidates, uce_guardrails=uce_guardrails)
         seed_list = [item for item in seed_list if (item[0] not in kmer_set) and (Reverse_Int(item[0], current_ka) not in kmer_set)]
         for contig in org_contigs:
@@ -898,6 +1072,11 @@ def process_key_value(args, key, ref_path, ref_count, iteration, soft_boundary, 
         "kmer_median_depth": round(best_contig[CONTIG_KMER_MEDIAN_DEPTH], 3),
         "kmer_depth_cv": round(best_contig[CONTIG_KMER_DEPTH_CV], 3),
         "kmer_max_depth_ratio": round(best_contig[CONTIG_KMER_MAX_DEPTH_RATIO], 3),
+        "thread_coverage_fraction": round(best_contig[CONTIG_THREAD_COVERAGE_FRACTION], 3),
+        "max_unsupported_span": best_contig[CONTIG_MAX_UNSUPPORTED_SPAN],
+        "thread_median_depth": round(best_contig[CONTIG_THREAD_MEDIAN_DEPTH], 3),
+        "dynamic_iteration": dynamic_iteration,
+        "manifest_overrides": ';'.join(manifest_overrides),
         "candidate_count": len(contigs_all),
         "low_quality": int(low_qual),
     }
@@ -924,11 +1103,21 @@ if __name__ == '__main__':
     pars.add_argument('--uce-density-check-min-length', dest='uce_density_check_min_length', metavar='<int>', type=int, default=1000, help='''minimum UCE contig length where read-density guardrail applies''')
     pars.add_argument('--uce-max-depth-cv', dest='uce_max_depth_cv', metavar='<float>', type=float, default=0, help='''optional maximum kmer depth coefficient of variation for UCE contigs; 0 disables''')
     pars.add_argument('--uce-max-depth-ratio', dest='uce_max_depth_ratio', metavar='<float>', type=float, default=0, help='''optional maximum kmer max/median depth ratio for UCE contigs; 0 disables''')
+    pars.add_argument('--uce-max-unsupported-fraction', dest='uce_max_unsupported_fraction', metavar='<float>', type=float, default=0, help='''optional maximum unsupported read-threading fraction for UCE contigs; 0 disables''')
+    pars.add_argument('--no-uce-dynamic-search', dest='uce_dynamic_search', action='store_false', default=True, help='''disable UCE dynamic search-depth budgeting''')
+    pars.add_argument('--uce-min-search-depth', dest='uce_min_search_depth', metavar='<int>', type=int, default=512, help='''minimum UCE dynamic search depth''')
+    pars.add_argument('--uce-reference-manifest', dest='uce_reference_manifest', metavar='<str>', default=None, help='''optional UCE reference manifest with per-locus assembly overrides''')
     pars.add_argument('--assembler-reference-cache-dir', dest='assembler_reference_cache_dir', metavar='<str>', default=None, help='''optional directory for cached assembler reference k-mer dictionaries''')
     args = pars.parse_args()
     args.uce_side_candidates = max(args.uce_side_candidates, 3)
     args.uce_max_contig_length = max(args.uce_max_contig_length, 0)
     args.uce_density_check_min_length = max(args.uce_density_check_min_length, 1)
+    args.uce_min_search_depth = max(args.uce_min_search_depth, 1)
+
+    if args.uce_reference_manifest:
+        args.uce_reference_manifest = os.path.realpath(args.uce_reference_manifest)
+        if not os.path.isfile(args.uce_reference_manifest):
+            pars.error(f"--uce-reference-manifest does not exist: {args.uce_reference_manifest}")
 
     if args.uce_min_read_density < 0:
         pars.error('--uce-min-read-density must be greater than or equal to 0')
@@ -936,6 +1125,13 @@ if __name__ == '__main__':
         pars.error('--uce-max-depth-cv must be greater than or equal to 0')
     if args.uce_max_depth_ratio < 0:
         pars.error('--uce-max-depth-ratio must be greater than or equal to 0')
+    if args.uce_max_unsupported_fraction < 0:
+        pars.error('--uce-max-unsupported-fraction must be greater than or equal to 0')
+
+    try:
+        args.uce_manifest = Load_Uce_Reference_Manifest(args.uce_reference_manifest)
+    except ValueError as e:
+        pars.error(str(e))
 
     try:
         # 初始化文件夹

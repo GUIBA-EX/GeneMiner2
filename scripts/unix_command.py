@@ -520,7 +520,15 @@ def build_assembler_command(assembler_bin, args, sample_dir, ref_dir, soft_bound
         '--uce-density-check-min-length', str(args.uce_density_check_min_length),
         '--uce-max-depth-cv', str(args.uce_max_depth_cv),
         '--uce-max-depth-ratio', str(args.uce_max_depth_ratio),
+        '--uce-max-unsupported-fraction', str(args.uce_max_unsupported_fraction),
+        '--uce-min-search-depth', str(args.uce_min_search_depth),
     ]
+
+    if not args.uce_dynamic_search:
+        command.append('--no-uce-dynamic-search')
+
+    if args.uce_reference_manifest:
+        command.extend(['--uce-reference-manifest', args.uce_reference_manifest])
 
     assembler_cache_dir = getattr(args, 'assembler_reference_cache_dir', None)
     original_ref_dir = getattr(args, 'r', None)
@@ -1811,6 +1819,10 @@ if __name__ == '__main__':
     group_assembly.add_argument('--uce-density-check-min-length', default=1000, help='Minimum contig length where the UCE read-density guardrail applies (default = 1000)', metavar='INT', type=int)
     group_assembly.add_argument('--uce-max-depth-cv', default=0, help='Optional maximum k-mer depth coefficient of variation for UCE contigs; 0 disables (default = 0)', metavar='FLOAT', type=float)
     group_assembly.add_argument('--uce-max-depth-ratio', default=0, help='Optional maximum max/median k-mer depth ratio for UCE contigs; 0 disables (default = 0)', metavar='FLOAT', type=float)
+    group_assembly.add_argument('--uce-max-unsupported-fraction', default=0, help='Optional maximum unsupported read-threading fraction for UCE contigs; 0 disables (default = 0)', metavar='FLOAT', type=float)
+    group_assembly.add_argument('--no-uce-dynamic-search', dest='uce_dynamic_search', action='store_false', default=True, help='Disable UCE dynamic search-depth budgeting')
+    group_assembly.add_argument('--uce-min-search-depth', default=512, help='Minimum dynamic search depth used for weak UCE loci (default = 512)', metavar='INT', type=int)
+    group_assembly.add_argument('--uce-reference-manifest', default=None, help='Optional CSV/TSV manifest with per-locus UCE assembly overrides', metavar='FILE')
     group_assembly.add_argument('--uce-rescue-reads', action='store_true', default=False, help='UCE mode only: after the first assembly, recruit raw reads once using preliminary contigs plus original references, then re-filter and re-assemble')
     group_assembly.add_argument('--uce-rescue-min-contig-length', default=60, help='Minimum preliminary contig length used as a UCE raw-read rescue reference (default = 60)', metavar='INT', type=int)
     group_assembly.add_argument('--uce-rescue-min-density-ratio', default=0.5, help='Minimum rescue/before read-density ratio kept after UCE raw-read rescue (default = 0.5)', metavar='FLOAT', type=float)
@@ -1856,6 +1868,7 @@ if __name__ == '__main__':
     args.uce_side_candidates = max(args.uce_side_candidates, 3)
     args.uce_max_contig_length = max(args.uce_max_contig_length, 0)
     args.uce_density_check_min_length = max(args.uce_density_check_min_length, 1)
+    args.uce_min_search_depth = max(args.uce_min_search_depth, 1)
     args.uce_rescue_min_contig_length = max(args.uce_rescue_min_contig_length, args.kf)
 
     if args.uce_min_read_density < 0:
@@ -1867,8 +1880,16 @@ if __name__ == '__main__':
     if args.uce_max_depth_ratio < 0:
         parser.error('--uce-max-depth-ratio must be greater than or equal to 0')
 
+    if args.uce_max_unsupported_fraction < 0:
+        parser.error('--uce-max-unsupported-fraction must be greater than or equal to 0')
+
     if args.uce_rescue_min_density_ratio <= 0:
         parser.error('--uce-rescue-min-density-ratio must be greater than 0')
+
+    if args.uce_reference_manifest:
+        args.uce_reference_manifest = os.path.realpath(args.uce_reference_manifest)
+        if not os.path.isfile(args.uce_reference_manifest):
+            parser.error(f"--uce-reference-manifest does not exist: {args.uce_reference_manifest}")
 
     if args.no_trimal and args.alignment_filter not in (None, 'none'):
         parser.error('--no-trimal cannot be combined with --alignment-filter trimal or --alignment-filter alifilter')
